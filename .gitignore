@@ -1,0 +1,59 @@
+# This repository contains only the portable Unity project.
+/*
+!/.gitignore
+!/README.md
+!/Assets/
+!/Packages/
+!/ProjectSettings/
+
+# Unity-generated state and build output.
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+/.vs/
+/.vscode/
+/.idea/
+/.utmp/
+
+# Editor and IDE files.
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+*.DotSettings.user
+sysinfo.txt
+mono_crash.*
+
+# Local recovery data and generated caches inside Assets.
+/Assets/_Recovery/
+/Assets/_Recovery.meta
+/Assets/__MergeRecovery/
+/Assets/__MergeRecovery.meta
+/Assets/Plugins/Editor/JetBrains*
+__pycache__/
+*.pyc
+*.log
+
+# Build and package artifacts.
+*.apk
+*.aab
+*.app
+*.unitypackage
+*.zip
+
