@@ -9,6 +9,12 @@ using UnityEngine.UI;
 using UnityEditor;
 #endif
 
+public enum HmiInteractionMode
+{
+    Control = 0,
+    TelemetryOnly = 1
+}
+
 public class PLCController_v2 : MonoBehaviour
 {
     public const string DefaultPiBaseUrl = "http://103.238.69.131:8080/plc";
@@ -80,6 +86,15 @@ public class PLCController_v2 : MonoBehaviour
     public VirtualMotorController virtualMotor;
     public Transform visualMotorRotor;
     public bool syncMotorModel = true;
+    [Min(0f)]
+    public float actualRpmDeadband = 0.5f;
+    [Min(1f)]
+    public float encoderPulsesPerRevolution = 5000f;
+    public bool correctRotorFromTelemetry = true;
+    [Min(0f)]
+    public float rotorCorrectionThresholdDegrees = 2f;
+    [Range(0f, 1f)]
+    public float rotorCorrectionStrength = 0.35f;
 
     [Header("HMI demo fallback")]
     public bool showRuntimeHmi = false;
@@ -88,6 +103,9 @@ public class PLCController_v2 : MonoBehaviour
 
     [Header("Canvas HMI")]
     public bool createCanvasHmi = true;
+    public HmiInteractionMode hmiInteractionMode = HmiInteractionMode.Control;
+    [Min(1f)]
+    public float telemetryStaleAfterSeconds = 2f;
     public Vector2 canvasHmiSize = new Vector2(300f, 250f);
     [Tooltip("Vi tri goc tren-trai cua bang HMI (pixel, tinh tu goc tren-trai man hinh).")]
     public Vector2 canvasHmiAnchoredPosition = new Vector2(16f, -16f);
@@ -95,6 +113,10 @@ public class PLCController_v2 : MonoBehaviour
     public GameObject hmiScreenObject;
     [Tooltip("Ty le thu nho bang HMI de khong che vung noi day.")]
     public float canvasHmiScale = 0.5f;
+
+    [Header("HMI Branding")]
+    public Sprite institutionLogo;
+    public string institutionName = "Học viện Công nghệ Bưu chính Viễn thông";
 
     [Header("Control Step Camera Layout")]
     public bool enableControlCameraLayout = true;
@@ -127,6 +149,24 @@ public class PLCController_v2 : MonoBehaviour
 
     public MotorTelemetry LatestTelemetry { get; private set; } = new MotorTelemetry();
     public bool IsPiOnline { get; private set; }
+    public bool IsTelemetryOnly => hmiInteractionMode == HmiInteractionMode.TelemetryOnly;
+    public int BlockedControlCommandCount { get; private set; }
+    public int ControlRequestCount { get; private set; }
+    public string LastBlockedControlAction { get; private set; } = string.Empty;
+    public string LastTelemetryReceivedAt { get; private set; } = string.Empty;
+    public float TelemetryAgeSeconds => lastTelemetryReceivedRealtime >= 0f
+        ? Mathf.Max(0f, Time.realtimeSinceStartup - lastTelemetryReceivedRealtime)
+        : float.PositiveInfinity;
+    public bool IsTelemetryFresh => IsPiOnline
+        && lastTelemetryReceivedRealtime >= 0f
+        && TelemetryAgeSeconds <= Mathf.Max(1f, telemetryStaleAfterSeconds);
+    public bool IsVisualMotorRunning => visualMotorRunning;
+    public float VisualMotorRpm => visualMotorRpm;
+    public float VisualMotorDegreesPerSecond => visualDegreesPerSecond;
+    public bool VisualMotorDirectionForward => visualDirectionForward;
+    public float LastRotorFeedbackAngleDegrees { get; private set; }
+    public float LastRotorCorrectionErrorDegrees { get; private set; }
+    public string VisualSyncStatus => visualSyncStatus;
 
     private struct BehaviourEnabledState
     {
@@ -141,6 +181,7 @@ public class PLCController_v2 : MonoBehaviour
     }
 
     private Coroutine pollingJob;
+    public bool IsTelemetryPolling => pollingJob != null;
     private string lastStatus = "";
     private GameObject canvasHmiRoot;
     private RectTransform canvasHmiPanelRect;
@@ -149,11 +190,24 @@ public class PLCController_v2 : MonoBehaviour
     private TextMeshProUGUI hmiSpeedText;
     private TextMeshProUGUI hmiSpeedSetText;
     private TextMeshProUGUI hmiStatusText;
+    private TextMeshProUGUI hmiTitleText;
+    private TextMeshProUGUI hmiTelemetryConnectionText;
+    private TextMeshProUGUI hmiTelemetryMotorText;
+    private TextMeshProUGUI hmiTelemetrySpeedText;
+    private TextMeshProUGUI hmiTelemetryDirectionText;
+    private TextMeshProUGUI hmiTelemetryEncoderText;
+    private TextMeshProUGUI hmiTelemetryRotationsText;
+    private TextMeshProUGUI hmiTelemetryAngleText;
+    private TextMeshProUGUI hmiTelemetryLastUpdateText;
+    private TextMeshProUGUI hmiTelemetryHealthText;
     private TMP_InputField hmiRotInput;
     private TMP_InputField hmiAngleInput;
     private TMP_InputField hmiSpeedInput;
     private Button hmiForwardButton;
     private Button hmiReverseButton;
+    private GameObject hmiSetupCard;
+    private GameObject hmiControlCard;
+    private GameObject hmiTelemetryCard;
     private readonly Color hmiDirectionNormalColor = new Color(0.09f, 0.55f, 0.95f, 1f);
     private readonly Color hmiDirectionSelectedColor = new Color(0.06f, 0.72f, 0.36f, 1f);
     private float hmiTargetSpeed = 0f;
@@ -163,8 +217,12 @@ public class PLCController_v2 : MonoBehaviour
     private bool hasQueuedRunCommand;
     private bool initialized;
     private float visualDegreesPerSecond;
+    private float visualMotorRpm;
+    private bool visualMotorRunning;
     private bool visualDirectionForward = true;
     private string visualSyncStatus = "Visual: waiting";
+    private bool visualRotorBaseCaptured;
+    private Quaternion visualRotorBaseLocalRotation;
     private Camera controlMainCamera;
     private Camera motorPipCamera;
     private Camera wiringPipCamera;
@@ -183,6 +241,11 @@ public class PLCController_v2 : MonoBehaviour
     private float savedMainCameraOrthographicSize;
     private Rect savedMainCameraRect;
     private float nextPipCameraRefreshTime;
+    private float nextTelemetryHmiRefreshTime;
+    private float nextMotorSafetyCheckTime;
+    private float lastTelemetryReceivedRealtime = -1f;
+    private string lastRotorCorrectionTelemetryTimestamp = string.Empty;
+    private int lastRotorCorrectionEncoderCount = int.MinValue;
     private readonly List<BehaviourEnabledState> disabledMainCameraBehaviours = new List<BehaviourEnabledState>();
     private readonly List<LayerState> hmiLayerStates = new List<LayerState>();
 
@@ -217,6 +280,9 @@ public class PLCController_v2 : MonoBehaviour
         initialized = true;
         Instance = this;
 
+        if (CircuitManager.Instance != null && CircuitManager.Instance.IsCompletedReviewMode)
+            hmiInteractionMode = HmiInteractionMode.TelemetryOnly;
+
 #if UNITY_EDITOR
         PlayerSettings.insecureHttpOption = InsecureHttpOption.AlwaysAllowed;
 #endif
@@ -234,6 +300,8 @@ public class PLCController_v2 : MonoBehaviour
 
         if (visualMotorRotor == null)
             visualMotorRotor = FindLikelyRotor();
+
+        CaptureVisualRotorBaseRotation();
 
         if (virtualMotor != null && virtualMotor.motorRotor == null && visualMotorRotor != null)
             virtualMotor.motorRotor = visualMotorRotor;
@@ -257,6 +325,19 @@ public class PLCController_v2 : MonoBehaviour
 
     private void Update()
     {
+        if (syncMotorModel && IsTelemetryOnly && Time.unscaledTime >= nextMotorSafetyCheckTime)
+        {
+            nextMotorSafetyCheckTime = Time.unscaledTime + 0.1f;
+            if (!IsTelemetryFresh && IsAnyVisualMotorActive())
+                StopVisualMotor("telemetry stale/offline");
+        }
+
+        if (runtimeHmiVisible && IsTelemetryOnly && Time.unscaledTime >= nextTelemetryHmiRefreshTime)
+        {
+            nextTelemetryHmiRefreshTime = Time.unscaledTime + 0.25f;
+            UpdateCanvasHmi();
+        }
+
         if (controlCameraLayoutActive && Time.unscaledTime >= nextPipCameraRefreshTime)
         {
             nextPipCameraRefreshTime = Time.unscaledTime + 0.5f;
@@ -266,7 +347,7 @@ public class PLCController_v2 : MonoBehaviour
             ConfigurePipCameras(viewForward);
         }
 
-        if (!syncMotorModel || !LatestTelemetry.running || visualMotorRotor == null || visualDegreesPerSecond <= 0f)
+        if (!syncMotorModel || !visualMotorRunning || visualMotorRotor == null || visualDegreesPerSecond <= 0f)
             return;
 
         bool virtualMotorOwnsRotor = virtualMotor != null && virtualMotor.isActiveAndEnabled && virtualMotor.motorRotor == visualMotorRotor;
@@ -278,7 +359,9 @@ public class PLCController_v2 : MonoBehaviour
         if (virtualMotorOwnsRotor || bladesOwnRotor)
             return;
 
-        float direction = visualDirectionForward ? 1f : -1f;
+        // Rotor_Main model faces opposite the real motor convention, so invert
+        // visual forward/reverse direction in the fallback rotation path too.
+        float direction = visualDirectionForward ? -1f : 1f;
         visualMotorRotor.Rotate(Vector3.forward, visualDegreesPerSecond * direction * Time.deltaTime, Space.Self);
     }
 
@@ -301,6 +384,9 @@ public class PLCController_v2 : MonoBehaviour
 
     public void TurnOn()
     {
+        if (RejectControlInTelemetryOnly("ON"))
+            return;
+
         if (!HasValidQueuedRunCommand())
         {
             Debug.LogWarning("[PLCController_v2] START ignored: chua SET so vong/goc hop le.");
@@ -316,11 +402,17 @@ public class PLCController_v2 : MonoBehaviour
 
     public void TurnOff()
     {
+        if (RejectControlInTelemetryOnly("OFF"))
+            return;
+
         SendControl("OFF");
     }
 
     public void SetSpeed(float rpm)
     {
+        if (RejectControlInTelemetryOnly("SET_SPEED"))
+            return;
+
         float previousSpeed = hmiTargetSpeed;
         hmiTargetSpeed = Mathf.Clamp(rpm, 1f, 100f);
         LatestTelemetry.setSpeedRpm = hmiTargetSpeed;
@@ -340,6 +432,9 @@ public class PLCController_v2 : MonoBehaviour
     // pulses = so lan xung gui xuong moi lan bam.
     public void SpeedUp(int pulses = 1)
     {
+        if (RejectControlInTelemetryOnly("SPEED_UP"))
+            return;
+
         hmiTargetSpeed = Mathf.Clamp(hmiTargetSpeed + Mathf.Max(1, pulses), 1f, 100f);
         LatestTelemetry.setSpeedRpm = hmiTargetSpeed;
         if (hmiSpeedInput != null)
@@ -349,6 +444,9 @@ public class PLCController_v2 : MonoBehaviour
 
     public void SpeedDown(int pulses = 1)
     {
+        if (RejectControlInTelemetryOnly("SPEED_DOWN"))
+            return;
+
         hmiTargetSpeed = Mathf.Clamp(hmiTargetSpeed - Mathf.Max(1, pulses), 1f, 100f);
         LatestTelemetry.setSpeedRpm = hmiTargetSpeed;
         if (hmiSpeedInput != null)
@@ -358,6 +456,9 @@ public class PLCController_v2 : MonoBehaviour
 
     public void SetTargetRotations(float rotations)
     {
+        if (RejectControlInTelemetryOnly("SET_ROTATIONS"))
+            return;
+
         float value = Mathf.Max(0f, rotations);
         if (value <= 0f)
         {
@@ -376,6 +477,9 @@ public class PLCController_v2 : MonoBehaviour
 
     public void SetTargetAngle(float angle)
     {
+        if (RejectControlInTelemetryOnly("SET_ANGLE"))
+            return;
+
         float value = Mathf.Max(0f, angle);
         if (value <= 0f)
         {
@@ -458,6 +562,9 @@ public class PLCController_v2 : MonoBehaviour
 
     public void SetDirectionForward()
     {
+        if (RejectControlInTelemetryOnly("SET_DIRECTION_FORWARD"))
+            return;
+
         LatestTelemetry.direction = "forward";
         UpdateDirectionButtons();
         SendControl("SET_DIRECTION", direction: "forward");
@@ -465,6 +572,9 @@ public class PLCController_v2 : MonoBehaviour
 
     public void SetDirectionReverse()
     {
+        if (RejectControlInTelemetryOnly("SET_DIRECTION_REVERSE"))
+            return;
+
         LatestTelemetry.direction = "reverse";
         UpdateDirectionButtons();
         SendControl("SET_DIRECTION", direction: "reverse");
@@ -492,6 +602,9 @@ public class PLCController_v2 : MonoBehaviour
 
     private void ResetHmiInputsAndPlc()
     {
+        if (RejectControlInTelemetryOnly("ERR_RESET"))
+            return;
+
         ResetHmiInputFields();
         SendControl("ERR_RESET", speed: 0f, rotations: 0f, angle: 0f, mode: "");
     }
@@ -525,20 +638,37 @@ public class PLCController_v2 : MonoBehaviour
         SendControl(action, hmiTargetSpeed, hmiTargetRotations, hmiTargetAngle, LatestTelemetry.direction, selectedMotionMode);
     }
 
+    public void SetHmiInteractionMode(HmiInteractionMode mode)
+    {
+        hmiInteractionMode = mode;
+        ApplyHmiInteractionMode();
+        UpdateCanvasHmi();
+    }
+
     public void SetRuntimeHmiVisible(bool visible)
     {
+        if (visible && CircuitManager.Instance != null && CircuitManager.Instance.IsCompletedReviewMode)
+            hmiInteractionMode = HmiInteractionMode.TelemetryOnly;
+
         runtimeHmiVisible = visible;
 
         if (createCanvasHmi && canvasHmiRoot == null)
             CreateCanvasHmi();
+
+        ApplyHmiInteractionMode();
 
         if (visible)
         {
             if (canvasHmiRoot != null)
                 canvasHmiRoot.SetActive(true);
 
-            ResetHmiInputFields();
-            UpdateDirectionButtons();
+            if (!IsTelemetryOnly)
+            {
+                ResetHmiInputFields();
+                UpdateDirectionButtons();
+            }
+
+            UpdateCanvasHmi();
             ActivateControlCameraLayout();
         }
         else
@@ -550,8 +680,46 @@ public class PLCController_v2 : MonoBehaviour
         }
     }
 
+    public void ShowWiringReviewCameraLayout()
+    {
+        DeactivateControlCameraLayout();
+
+        Camera mainCamera = Camera.main;
+        if (mainCamera == null)
+            return;
+
+        DisableMainCameraFramingBehaviours(mainCamera);
+        mainCamera.rect = new Rect(0f, 0f, 1f, 1f);
+        mainCamera.orthographic = false;
+
+        Vector3 viewForward = mainCamera.transform.forward;
+        if (TryCalculateWiringOverviewBounds(out Bounds overviewBounds))
+        {
+            FrameCameraAtBoundsTight(
+                mainCamera,
+                overviewBounds,
+                viewForward,
+                wiringPipCameraFov,
+                0.9f,
+                0.16f);
+        }
+        else if (TryCalculateWiringPipBounds(out Bounds wiringBounds))
+        {
+            FrameCameraAtBoundsTight(
+                mainCamera,
+                wiringBounds,
+                viewForward,
+                wiringPipCameraFov,
+                0.85f,
+                0.16f);
+        }
+    }
+
     private void SendControl(string action, float speed = -1f, float rotations = -1f, float angle = -1f, string direction = "", string mode = "")
     {
+        if (RejectControlInTelemetryOnly(action))
+            return;
+
         if (speed < 0f) speed = hmiTargetSpeed > 0f ? hmiTargetSpeed : 0f;
         if (rotations < 0f) rotations = hmiTargetRotations;
         if (angle < 0f) angle = hmiTargetAngle;
@@ -580,6 +748,17 @@ public class PLCController_v2 : MonoBehaviour
             ApplyOptimisticTelemetry(command);
     }
 
+    private bool RejectControlInTelemetryOnly(string action)
+    {
+        if (!IsTelemetryOnly)
+            return false;
+
+        LastBlockedControlAction = string.IsNullOrWhiteSpace(action) ? "UNKNOWN" : action.Trim();
+        BlockedControlCommandCount++;
+        Debug.Log($"[PLCController_v2] TelemetryOnly blocked control action: {LastBlockedControlAction}");
+        return true;
+    }
+
     private bool ShouldApplyLocalTelemetryImmediately(ControlCommand command)
     {
         if (command == null)
@@ -593,6 +772,7 @@ public class PLCController_v2 : MonoBehaviour
 
     private IEnumerator PostControlRoutine(ControlCommand command)
     {
+        ControlRequestCount++;
         string jsonData = JsonUtility.ToJson(command);
 
         using (UnityWebRequest request = new UnityWebRequest(BuildUrl(controlEndpoint), "POST"))
@@ -737,9 +917,13 @@ public class PLCController_v2 : MonoBehaviour
         if (string.IsNullOrWhiteSpace(telemetry.direction)) telemetry.direction = LatestTelemetry.direction;
         if (fromPi)
         {
-            telemetry.setSpeedRpm = telemetry.setSpeedRpm > 0f
-                ? Mathf.Clamp(telemetry.setSpeedRpm, 1f, 100f)
-                : hmiTargetSpeed;
+            lastTelemetryReceivedRealtime = Time.realtimeSinceStartup;
+            LastTelemetryReceivedAt = DateTimeOffset.Now.ToString("HH:mm:ss");
+            telemetry.setSpeedRpm = IsTelemetryOnly
+                ? Mathf.Max(0f, telemetry.setSpeedRpm)
+                : (telemetry.setSpeedRpm > 0f
+                    ? Mathf.Clamp(telemetry.setSpeedRpm, 1f, 100f)
+                    : hmiTargetSpeed);
         }
         else if (telemetry.setSpeedRpm <= 0f)
             telemetry.setSpeedRpm = hmiTargetSpeed;
@@ -756,6 +940,25 @@ public class PLCController_v2 : MonoBehaviour
         SyncMotorFromTelemetry();
         PublishTelemetry();
     }
+
+#if UNITY_EDITOR
+    public void ApplyTelemetryForTesting(MotorTelemetry telemetry, bool online = true)
+    {
+        if (telemetry == null)
+            return;
+
+        if (online)
+        {
+            ApplyTelemetry(telemetry, true);
+            return;
+        }
+
+        LatestTelemetry = telemetry;
+        IsPiOnline = false;
+        SyncMotorFromTelemetry();
+        PublishTelemetry();
+    }
+#endif
 
     private void ApplyOptimisticTelemetry(ControlCommand command)
     {
@@ -792,63 +995,193 @@ public class PLCController_v2 : MonoBehaviour
         if (virtualMotor == null)
             virtualMotor = FindObjectOfType<VirtualMotorController>();
 
-        if (rotateBlades == null && virtualMotor == null)
+        if (visualMotorRotor == null)
+            visualMotorRotor = FindLikelyRotor();
+        CaptureVisualRotorBaseRotation();
+
+        if (IsTelemetryOnly && !IsTelemetryFresh)
         {
-            Debug.LogWarning("[PLCController_v2] Khong tim thay motor ao de sync telemetry.");
+            StopVisualMotor("telemetry stale/offline");
             return;
         }
 
-        // speedRpm la RPM phan hoi thuc te. Neu mau toc do ve 0 trong luc PLC van RUN,
-        // dung toc do dat/tan so xung lam fallback de model 3D khong bi dung khung.
         float feedbackRpm = Mathf.Abs(LatestTelemetry.speedRpm);
-        float fallbackRpm = LatestTelemetry.setSpeedRpm > 0f
-            ? LatestTelemetry.setSpeedRpm
-            : Mathf.Max(0f, LatestTelemetry.pulseFrequency / 5000f * 60f);
-        bool feedbackLooksTooLow = LatestTelemetry.running
-            && fallbackRpm > 0f
-            && feedbackRpm < fallbackRpm * 0.5f;
-        float realRpm = feedbackRpm > 0.5f && !feedbackLooksTooLow
+        float realRpm = IsTelemetryOnly
             ? feedbackRpm
-            : (LatestTelemetry.running ? fallbackRpm : 0f);
-        visualDegreesPerSecond = LatestTelemetry.running ? realRpm * 6f : 0f; // 1 rpm = 6 deg/s
-        float visualRpm = realRpm;
-        bool isForward = !LatestTelemetry.direction.Equals("reverse", StringComparison.OrdinalIgnoreCase);
+            : ResolveControlModeRpm(feedbackRpm);
+        bool isForward = ResolveTelemetryDirection();
+        bool shouldRun = LatestTelemetry.running && realRpm > Mathf.Max(0f, actualRpmDeadband);
+
+        visualMotorRunning = shouldRun;
+        visualMotorRpm = shouldRun ? realRpm : 0f;
+        visualDegreesPerSecond = visualMotorRpm * 6f;
         visualDirectionForward = isForward;
 
-        if (visualMotorRotor == null)
-            visualMotorRotor = FindLikelyRotor();
-
-        if (rotateBlades != null)
-        {
-            rotateBlades.soVongCanQuay = float.PositiveInfinity;
-            rotateBlades.rotationSpeed = visualDegreesPerSecond;
-            rotateBlades.SetRotationDirection(isForward);
-            if (rotateBlades.GetIsRotating() != LatestTelemetry.running)
-                rotateBlades.RotateObject(LatestTelemetry.running);
-        }
-
-        if (virtualMotor != null)
-        {
-            if (Mathf.Abs(virtualMotor.targetSpeed - visualRpm) > 0.1f)
-                virtualMotor.SetSpeed(visualRpm);
-
-            if (virtualMotor.isForward != isForward)
-            {
-                if (isForward) virtualMotor.SetForward();
-                else virtualMotor.SetReverse();
-            }
-
-            if (LatestTelemetry.running && !virtualMotor.isRunning)
-                virtualMotor.StartMotor();
-            else if (!LatestTelemetry.running && virtualMotor.isRunning)
-                virtualMotor.Stop();
-        }
+        ApplyRotorFeedbackCorrection(isForward);
+        ApplyVisualMotorDriverState(shouldRun, isForward);
 
         string targetName = visualMotorRotor != null ? visualMotorRotor.name : "none";
         bool bladesRotating = rotateBlades != null && rotateBlades.GetIsRotating();
         bool virtualRotating = virtualMotor != null && virtualMotor.isRunning;
-        visualSyncStatus = $"Visual: {(LatestTelemetry.running ? "RUN" : "STOP")} {visualDegreesPerSecond:F0} deg/s -> {targetName}"
-            + $" (blades:{bladesRotating}, vm:{virtualRotating})";
+        visualSyncStatus = $"Visual: {(shouldRun ? "RUN" : "STOP")} {visualDegreesPerSecond:F1} deg/s -> {targetName}"
+            + $" (fresh:{IsTelemetryFresh}, blades:{bladesRotating}, vm:{virtualRotating})";
+    }
+
+    private float ResolveControlModeRpm(float feedbackRpm)
+    {
+        float fallbackRpm = LatestTelemetry.setSpeedRpm > 0f
+            ? LatestTelemetry.setSpeedRpm
+            : Mathf.Max(0f, LatestTelemetry.pulseFrequency / Mathf.Max(1f, encoderPulsesPerRevolution) * 60f);
+        bool feedbackLooksTooLow = LatestTelemetry.running
+            && fallbackRpm > 0f
+            && feedbackRpm < fallbackRpm * 0.5f;
+        return feedbackRpm > Mathf.Max(0f, actualRpmDeadband) && !feedbackLooksTooLow
+            ? feedbackRpm
+            : (LatestTelemetry.running ? fallbackRpm : 0f);
+    }
+
+    private bool ResolveTelemetryDirection()
+    {
+        if (LatestTelemetry.speedRpm < -Mathf.Max(0f, actualRpmDeadband))
+            return false;
+
+        string direction = LatestTelemetry.direction ?? string.Empty;
+        if (direction.Equals("reverse", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (direction.Equals("forward", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return visualDirectionForward;
+    }
+
+    private void ApplyVisualMotorDriverState(bool shouldRun, bool isForward)
+    {
+        if (rotateBlades != null)
+        {
+            rotateBlades.soVongCanQuay = float.PositiveInfinity;
+            rotateBlades.rotationSpeed = shouldRun ? visualDegreesPerSecond : 0f;
+            rotateBlades.SetRotationDirection(isForward);
+            if (rotateBlades.GetIsRotating() != shouldRun)
+                rotateBlades.RotateObject(shouldRun);
+
+            if (virtualMotor != null)
+            {
+                if (virtualMotor.isRunning)
+                    virtualMotor.Stop();
+                virtualMotor.currentSpeed = 0f;
+            }
+            return;
+        }
+
+        if (virtualMotor != null)
+        {
+            if (Mathf.Abs(virtualMotor.targetSpeed - visualMotorRpm) > 0.1f)
+                virtualMotor.SetSpeed(visualMotorRpm);
+
+            if (virtualMotor.isForward != isForward)
+            {
+                if (isForward)
+                    virtualMotor.SetForward();
+                else
+                    virtualMotor.SetReverse();
+            }
+
+            if (shouldRun && !virtualMotor.isRunning)
+                virtualMotor.StartMotor();
+            else if (!shouldRun && virtualMotor.isRunning)
+                virtualMotor.Stop();
+        }
+    }
+
+    private void StopVisualMotor(string reason)
+    {
+        visualMotorRunning = false;
+        visualMotorRpm = 0f;
+        visualDegreesPerSecond = 0f;
+
+        if (rotateBlades != null)
+        {
+            rotateBlades.rotationSpeed = 0f;
+            if (rotateBlades.GetIsRotating())
+                rotateBlades.RotateObject(false);
+        }
+
+        if (virtualMotor != null)
+        {
+            virtualMotor.targetSpeed = 0f;
+            virtualMotor.currentSpeed = 0f;
+            if (virtualMotor.isRunning)
+                virtualMotor.Stop();
+        }
+
+        visualSyncStatus = $"Visual: STOP ({reason})";
+    }
+
+    private bool IsAnyVisualMotorActive()
+    {
+        return visualMotorRunning
+            || visualDegreesPerSecond > 0f
+            || (rotateBlades != null && rotateBlades.GetIsRotating())
+            || (virtualMotor != null && virtualMotor.isRunning);
+    }
+
+    private void CaptureVisualRotorBaseRotation()
+    {
+        if (visualRotorBaseCaptured || visualMotorRotor == null)
+            return;
+
+        visualRotorBaseLocalRotation = visualMotorRotor.localRotation;
+        visualRotorBaseCaptured = true;
+    }
+
+    private void ApplyRotorFeedbackCorrection(bool isForward)
+    {
+        if (!correctRotorFromTelemetry || visualMotorRotor == null || !IsTelemetryFresh)
+            return;
+
+        string sampleTimestamp = LatestTelemetry.timestamp ?? string.Empty;
+        bool sameTimestamp = !string.IsNullOrEmpty(sampleTimestamp)
+            && sampleTimestamp.Equals(lastRotorCorrectionTelemetryTimestamp, StringComparison.Ordinal);
+        bool sameEncoderCount = LatestTelemetry.encoderCount == lastRotorCorrectionEncoderCount;
+        if (sameTimestamp || sameEncoderCount)
+            return;
+
+        lastRotorCorrectionTelemetryTimestamp = sampleTimestamp;
+        lastRotorCorrectionEncoderCount = LatestTelemetry.encoderCount;
+
+        CaptureVisualRotorBaseRotation();
+        if (!visualRotorBaseCaptured)
+            return;
+
+        float feedbackAngle = ResolveRotorFeedbackAngleDegrees();
+        LastRotorFeedbackAngleDegrees = feedbackAngle;
+        Vector3 axis = rotateBlades != null && rotateBlades.rotationAxis.sqrMagnitude > 0.0001f
+            ? rotateBlades.rotationAxis.normalized
+            : Vector3.forward;
+        float modelAngle = Mathf.Repeat(feedbackAngle, 360f) * (isForward ? -1f : 1f);
+        Quaternion expected = visualRotorBaseLocalRotation * Quaternion.AngleAxis(modelAngle, axis);
+        LastRotorCorrectionErrorDegrees = Quaternion.Angle(visualMotorRotor.localRotation, expected);
+
+        if (LastRotorCorrectionErrorDegrees <= Mathf.Max(0f, rotorCorrectionThresholdDegrees))
+            return;
+
+        visualMotorRotor.localRotation = Quaternion.Slerp(
+            visualMotorRotor.localRotation,
+            expected,
+            Mathf.Clamp01(rotorCorrectionStrength));
+        LastRotorCorrectionErrorDegrees = Quaternion.Angle(visualMotorRotor.localRotation, expected);
+    }
+
+    private float ResolveRotorFeedbackAngleDegrees()
+    {
+        if (Mathf.Abs(LatestTelemetry.angle) > 0.0001f)
+            return LatestTelemetry.angle;
+        if (Mathf.Abs(LatestTelemetry.rotationsExact) > 0.0001f)
+            return LatestTelemetry.rotationsExact * 360f;
+        if (LatestTelemetry.encoderCount != 0)
+            return LatestTelemetry.encoderCount / Mathf.Max(1f, encoderPulsesPerRevolution) * 360f;
+
+        return 0f;
     }
 
     private float GetDisplayRpm()
@@ -880,11 +1213,21 @@ public class PLCController_v2 : MonoBehaviour
 
         Vector3 viewForward = savedMainCameraRotation * Vector3.forward;
         Transform hmiTarget = hmiScreenObject != null ? hmiScreenObject.transform : (canvasHmiRoot != null ? canvasHmiRoot.transform : null);
+        bool hmiUsesScreenSpace = IsCanvasHmiScreenSpace();
         mainCamera.rect = new Rect(0f, 0f, 1f, 1f);
         mainCamera.orthographic = false;
 
-        if (hmiTarget != null)
+        if (hmiUsesScreenSpace)
+        {
+            if (TryCalculateWiringOverviewBounds(out Bounds overviewBounds))
+                FrameCameraAtBoundsTight(mainCamera, overviewBounds, viewForward, wiringPipCameraFov, 0.9f, 0.16f);
+            else if (TryCalculateWiringPipBounds(out Bounds wiringBounds))
+                FrameCameraAtBoundsTight(mainCamera, wiringBounds, viewForward, wiringPipCameraFov, 0.85f, 0.16f);
+        }
+        else if (hmiTarget != null)
+        {
             FrameCameraAtTarget(mainCamera, hmiTarget, viewForward, controlHmiCameraFov, controlHmiDistanceScale, controlHmiMinDistance);
+        }
 
         EnsureControlCameraOverlay();
         MoveHmiToUiLayerForPip();
@@ -897,15 +1240,31 @@ public class PLCController_v2 : MonoBehaviour
         nextPipCameraRefreshTime = 0f;
     }
 
+    private bool IsCanvasHmiScreenSpace()
+    {
+        if (canvasHmiRoot == null)
+            return false;
+
+        Canvas canvas = canvasHmiRoot.GetComponent<Canvas>();
+        return canvas != null && canvas.renderMode != RenderMode.WorldSpace;
+    }
+
     private void DeactivateControlCameraLayout()
     {
         if (motorPipCamera != null)
+        {
+            motorPipCamera.enabled = false;
             motorPipCamera.gameObject.SetActive(false);
+        }
         if (wiringPipCamera != null)
+        {
+            wiringPipCamera.enabled = false;
             wiringPipCamera.gameObject.SetActive(false);
+        }
         if (controlCameraOverlayRoot != null)
             controlCameraOverlayRoot.SetActive(false);
 
+        DisableAllRuntimeControlCameraObjects();
         RestoreHmiLayers();
 
         if (mainCameraStateSaved && controlMainCamera != null)
@@ -922,6 +1281,37 @@ public class PLCController_v2 : MonoBehaviour
         controlCameraLayoutActive = false;
         mainCameraStateSaved = false;
         controlMainCamera = null;
+    }
+
+    private void DisableAllRuntimeControlCameraObjects()
+    {
+        foreach (Camera camera in Resources.FindObjectsOfTypeAll<Camera>())
+        {
+            if (camera == null ||
+                !camera.gameObject.scene.IsValid() ||
+                camera.gameObject.scene != gameObject.scene ||
+                (camera.name != "Runtime_Motor_PIP_Camera" &&
+                 camera.name != "Runtime_Wiring_PIP_Camera"))
+            {
+                continue;
+            }
+
+            camera.enabled = false;
+            camera.gameObject.SetActive(false);
+        }
+
+        foreach (GameObject candidate in Resources.FindObjectsOfTypeAll<GameObject>())
+        {
+            if (candidate == null ||
+                !candidate.scene.IsValid() ||
+                candidate.scene != gameObject.scene ||
+                candidate.name != "Runtime_Control_Camera_Overlay")
+            {
+                continue;
+            }
+
+            candidate.SetActive(false);
+        }
     }
 
     private void SaveMainCameraState(Camera mainCamera)
@@ -992,6 +1382,8 @@ public class PLCController_v2 : MonoBehaviour
         if (controlCameraOverlayRoot != null)
             return;
 
+        RemoveOrphanedControlCameraObjects();
+
         controlCameraOverlayRoot = new GameObject("Runtime_Control_Camera_Overlay");
         Canvas canvas = controlCameraOverlayRoot.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
@@ -1013,17 +1405,53 @@ public class PLCController_v2 : MonoBehaviour
             motorPipOffset,
             motorPipSize);
 
-        wiringPipImage = CreatePipPanel(
-            controlCameraOverlayRoot.transform,
-            "WiringPipPanel",
-            "DAY NOI",
-            new Vector2(0f, 0f),
-            new Vector2(0f, 0f),
-            new Vector2(0f, 0f),
-            wiringPipOffset,
-            wiringPipSize);
+        if (!IsCanvasHmiScreenSpace())
+        {
+            wiringPipImage = CreatePipPanel(
+                controlCameraOverlayRoot.transform,
+                "WiringPipPanel",
+                "DAY NOI",
+                new Vector2(0f, 0f),
+                new Vector2(0f, 0f),
+                new Vector2(0f, 0f),
+                wiringPipOffset,
+                wiringPipSize);
+        }
 
         controlCameraOverlayRoot.SetActive(false);
+    }
+
+    private void RemoveOrphanedControlCameraObjects()
+    {
+        foreach (Camera camera in Resources.FindObjectsOfTypeAll<Camera>())
+        {
+            if (camera == null ||
+                !camera.gameObject.scene.IsValid() ||
+                camera.gameObject.scene != gameObject.scene ||
+                (camera.name != "Runtime_Motor_PIP_Camera" &&
+                 camera.name != "Runtime_Wiring_PIP_Camera"))
+            {
+                continue;
+            }
+
+            camera.enabled = false;
+            camera.gameObject.SetActive(false);
+            Destroy(camera.gameObject);
+        }
+
+        foreach (GameObject candidate in Resources.FindObjectsOfTypeAll<GameObject>())
+        {
+            if (candidate == null ||
+                !candidate.scene.IsValid() ||
+                candidate.scene != gameObject.scene ||
+                candidate.name != "Runtime_Control_Camera_Overlay")
+            {
+                continue;
+            }
+
+            candidate.SetActive(false);
+            Destroy(candidate);
+        }
     }
 
     private RawImage CreatePipPanel(Transform parent, string name, string title, Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, Vector2 anchoredPosition, Vector2 size)
@@ -1039,13 +1467,13 @@ public class PLCController_v2 : MonoBehaviour
         panelRect.sizeDelta = size;
 
         Image background = panel.AddComponent<Image>();
-        background.color = new Color(0.01f, 0.04f, 0.05f, 0.78f);
+        background.color = new Color(1f, 1f, 1f, 0.92f);
         background.raycastTarget = false;
         AddShadow(panel, new Color(0f, 0f, 0f, 0.32f), new Vector2(0f, -5f));
 
         TextMeshProUGUI label = CreateText(panel.transform, "Label", title, new Vector2(8f, -4f), new Vector2(size.x - 16f, 22f), 13, true);
         label.alignment = TextAlignmentOptions.MidlineLeft;
-        label.color = Color.white;
+        label.color = new Color(0.08f, 0.1f, 0.12f, 1f);
 
         GameObject view = new GameObject("View");
         view.transform.SetParent(panel.transform, false);
@@ -1068,11 +1496,15 @@ public class PLCController_v2 : MonoBehaviour
             return;
 
         RenderTexture motorTexture = EnsureRenderTexture(ref motorPipTexture, motorPipSize, "MotorPipTexture");
-        RenderTexture wiringTexture = EnsureRenderTexture(ref wiringPipTexture, wiringPipSize, "WiringPipTexture");
         if (motorPipImage != null)
             motorPipImage.texture = motorTexture;
+
+        RenderTexture wiringTexture = null;
         if (wiringPipImage != null)
+        {
+            wiringTexture = EnsureRenderTexture(ref wiringPipTexture, wiringPipSize, "WiringPipTexture");
             wiringPipImage.texture = wiringTexture;
+        }
 
         Camera motorCamera = EnsurePipCamera(ref motorPipCamera, "Runtime_Motor_PIP_Camera");
         CopyPipCameraSettings(sourceCamera, motorCamera);
@@ -1086,21 +1518,29 @@ public class PLCController_v2 : MonoBehaviour
         else
             motorCamera.transform.SetPositionAndRotation(savedMainCameraPosition, savedMainCameraRotation);
 
-        Camera wiringCamera = EnsurePipCamera(ref wiringPipCamera, "Runtime_Wiring_PIP_Camera");
-        CopyPipCameraSettings(sourceCamera, wiringCamera);
-        wiringCamera.targetTexture = wiringTexture;
-        float effectiveWiringFov = Mathf.Clamp(wiringPipCameraFov, 28f, 38f);
-        if (TryCalculateWiringOverviewBounds(out Bounds overviewBounds))
-            FrameCameraAtBoundsTight(wiringCamera, overviewBounds, baseViewForward, effectiveWiringFov, 0.9f, 0.16f);
-        else if (TryCalculateWiringPipBounds(out Bounds wiringBounds))
-            FrameCameraAtBoundsTight(wiringCamera, wiringBounds, baseViewForward, effectiveWiringFov, 0.78f, 0.16f);
-        else
+        if (wiringPipImage != null)
         {
-            wiringCamera.fieldOfView = effectiveWiringFov;
-            wiringCamera.transform.SetPositionAndRotation(savedMainCameraPosition, savedMainCameraRotation);
+            Camera wiringCamera = EnsurePipCamera(ref wiringPipCamera, "Runtime_Wiring_PIP_Camera");
+            CopyPipCameraSettings(sourceCamera, wiringCamera);
+            wiringCamera.targetTexture = wiringTexture;
+            float effectiveWiringFov = Mathf.Clamp(wiringPipCameraFov, 28f, 38f);
+            if (TryCalculateWiringOverviewBounds(out Bounds overviewBounds))
+                FrameCameraAtBoundsTight(wiringCamera, overviewBounds, baseViewForward, effectiveWiringFov, 0.9f, 0.16f);
+            else if (TryCalculateWiringPipBounds(out Bounds wiringBounds))
+                FrameCameraAtBoundsTight(wiringCamera, wiringBounds, baseViewForward, effectiveWiringFov, 0.78f, 0.16f);
+            else
+            {
+                wiringCamera.fieldOfView = effectiveWiringFov;
+                wiringCamera.transform.SetPositionAndRotation(savedMainCameraPosition, savedMainCameraRotation);
+            }
+            wiringCamera.enabled = true;
+            wiringCamera.gameObject.SetActive(true);
         }
-        wiringCamera.enabled = true;
-        wiringCamera.gameObject.SetActive(true);
+        else if (wiringPipCamera != null)
+        {
+            wiringPipCamera.enabled = false;
+            wiringPipCamera.gameObject.SetActive(false);
+        }
     }
 
     private Camera EnsurePipCamera(ref Camera camera, string name)
@@ -1603,6 +2043,9 @@ public class PLCController_v2 : MonoBehaviour
     private void SetConnectionStatus(bool online, string status)
     {
         IsPiOnline = online;
+        if (!online && IsTelemetryOnly && syncMotorModel)
+            StopVisualMotor("gateway offline");
+
         if (lastStatus == status)
             return;
 
@@ -1697,19 +2140,43 @@ public class PLCController_v2 : MonoBehaviour
         canvasHmiPanelRect = panel.GetComponent<RectTransform>();
         if (canvasHmiPanelRect == null)
             canvasHmiPanelRect = panel.AddComponent<RectTransform>();
-        canvasHmiPanelRect.anchorMin = new Vector2(0f, 1f);
-        canvasHmiPanelRect.anchorMax = new Vector2(0f, 1f);
-        canvasHmiPanelRect.pivot = new Vector2(0f, 1f);
-        if (!usesSceneHmi)
-            canvasHmiPanelRect.anchoredPosition = canvasHmiAnchoredPosition;
-        else
-            canvasHmiPanelRect.anchoredPosition = Vector2.zero;
-        Vector2 modernHmiSize = new Vector2(620f, 420f);
+        Vector2 modernHmiSize = new Vector2(620f, 480f);
         RectTransform rootRect = canvasHmiRoot.GetComponent<RectTransform>();
+        bool screenSpaceHmi = canvas.renderMode != RenderMode.WorldSpace;
         if (rootRect != null)
-            rootRect.sizeDelta = modernHmiSize;
+        {
+            if (screenSpaceHmi)
+            {
+                rootRect.anchorMin = Vector2.zero;
+                rootRect.anchorMax = Vector2.one;
+                rootRect.pivot = new Vector2(0.5f, 0.5f);
+                rootRect.offsetMin = Vector2.zero;
+                rootRect.offsetMax = Vector2.zero;
+                canvasHmiRoot.transform.localScale = Vector3.one;
+            }
+            else
+            {
+                rootRect.sizeDelta = modernHmiSize;
+            }
+        }
+        if (screenSpaceHmi)
+        {
+            canvasHmiPanelRect.anchorMin = new Vector2(1f, 1f);
+            canvasHmiPanelRect.anchorMax = new Vector2(1f, 1f);
+            canvasHmiPanelRect.pivot = new Vector2(1f, 1f);
+            canvasHmiPanelRect.anchoredPosition = new Vector2(-32f, -52f);
+        }
+        else
+        {
+            canvasHmiPanelRect.anchorMin = new Vector2(0f, 1f);
+            canvasHmiPanelRect.anchorMax = new Vector2(0f, 1f);
+            canvasHmiPanelRect.pivot = new Vector2(0f, 1f);
+            canvasHmiPanelRect.anchoredPosition = usesSceneHmi ? Vector2.zero : canvasHmiAnchoredPosition;
+        }
         canvasHmiPanelRect.sizeDelta = modernHmiSize;
-        if (!usesSceneHmi)
+        if (screenSpaceHmi)
+            panel.transform.localScale = Vector3.one * 0.85f;
+        else if (!usesSceneHmi)
             panel.transform.localScale = Vector3.one * canvasHmiScale;
         else
             panel.transform.localScale = Vector3.one;
@@ -1720,12 +2187,16 @@ public class PLCController_v2 : MonoBehaviour
         panelImage.color = screenBg;
         AddShadow(panel, new Color(0.02f, 0.16f, 0.16f, 0.18f), new Vector2(0f, -6f));
 
-        TextMeshProUGUI title = CreateText(panel.transform, "HmiTitle", "GIAO DIỆN ĐIỀU KHIỂN", new Vector2(0f, -8f), new Vector2(620f, 44f), 25, true);
-        title.alignment = TextAlignmentOptions.Center;
-        title.color = titleColor;
+        CreateInstitutionHeader(panel.transform, modernHmiSize, redBtn);
 
-        Transform gp = MakeSubPanel(panel.transform, "SetupCard", new Vector2(14f, -64f), new Vector2(374f, 342f), card);
-        Transform rp = MakeSubPanel(panel.transform, "ControlCard", new Vector2(402f, -64f), new Vector2(204f, 342f), card);
+        hmiTitleText = CreateText(panel.transform, "HmiTitle", "GIAO DIỆN ĐIỀU KHIỂN", new Vector2(0f, -66f), new Vector2(620f, 32f), 22, true);
+        hmiTitleText.alignment = TextAlignmentOptions.Center;
+        hmiTitleText.color = titleColor;
+
+        Transform gp = MakeSubPanel(panel.transform, "SetupCard", new Vector2(14f, -104f), new Vector2(374f, 342f), card);
+        Transform rp = MakeSubPanel(panel.transform, "ControlCard", new Vector2(402f, -104f), new Vector2(204f, 342f), card);
+        hmiSetupCard = gp.gameObject;
+        hmiControlCard = rp.gameObject;
         Transform statusPanel = MakeSubPanel(gp, "StatusPanel", new Vector2(14f, -244f), new Vector2(346f, 88f), statusBg);
 
         TextMeshProUGUI setupTitle = CreateText(gp, "SetupTitle", "Thiết lập", new Vector2(16f, -10f), new Vector2(140f, 26f), 19, true);
@@ -1768,6 +2239,8 @@ public class PLCController_v2 : MonoBehaviour
         CreateButton(rp, "Stop", "STOP", new Vector2(16f, -207f), new Vector2(172f, 42f), redBtn).onClick.AddListener(TurnOff);
         CreateButton(rp, "RstRight", "RST", new Vector2(16f, -260f), new Vector2(172f, 42f), orangeBtn).onClick.AddListener(ResetHmiInputsAndPlc);
 
+        CreateTelemetryOnlyPanel(panel.transform, card, statusBg, titleColor);
+
         if (showWireLabels)
         {
             CreateWireLabel(canvasHmiRoot.transform, "WireLabelYellow", "Dây Vàng: Y0-Pin11", new Color(1f, 0.78f, 0f), wireLabelsCenter);
@@ -1776,8 +2249,113 @@ public class PLCController_v2 : MonoBehaviour
 
         ResetHmiInputFields();
         UpdateDirectionButtons();
+        ApplyHmiInteractionMode();
         canvasHmiRoot.SetActive(runtimeHmiVisible);
         UpdateCanvasHmi();
+    }
+
+    private void CreateTelemetryOnlyPanel(Transform parent, Color cardColor, Color statusColor, Color titleColor)
+    {
+        Transform telemetry = MakeSubPanel(
+            parent,
+            "TelemetryCard",
+            new Vector2(14f, -104f),
+            new Vector2(592f, 342f),
+            cardColor);
+        hmiTelemetryCard = telemetry.gameObject;
+
+        Transform connectionBand = MakeSubPanel(
+            telemetry,
+            "ConnectionBand",
+            new Vector2(16f, -14f),
+            new Vector2(560f, 44f),
+            statusColor);
+        hmiTelemetryConnectionText = CreateText(
+            connectionBand,
+            "Connection",
+            "Kết nối RS485: Đang chờ",
+            new Vector2(14f, -7f),
+            new Vector2(532f, 30f),
+            17,
+            true);
+
+        Transform motorCard = MakeSubPanel(
+            telemetry,
+            "MotorTelemetry",
+            new Vector2(16f, -70f),
+            new Vector2(270f, 190f),
+            statusColor);
+        TextMeshProUGUI motorTitle = CreateText(
+            motorCard,
+            "Title",
+            "TRẠNG THÁI ĐỘNG CƠ",
+            new Vector2(14f, -10f),
+            new Vector2(242f, 24f),
+            16,
+            true);
+        motorTitle.color = titleColor;
+        hmiTelemetryMotorText = CreateText(motorCard, "MotorState", "Motor: --", new Vector2(14f, -48f), new Vector2(242f, 26f), 17, true);
+        hmiTelemetrySpeedText = CreateText(motorCard, "ActualSpeed", "RPM thực tế: 0", new Vector2(14f, -88f), new Vector2(242f, 26f), 16, false);
+        hmiTelemetryDirectionText = CreateText(motorCard, "Direction", "Chiều quay: --", new Vector2(14f, -128f), new Vector2(242f, 26f), 16, false);
+
+        Transform encoderCard = MakeSubPanel(
+            telemetry,
+            "EncoderTelemetry",
+            new Vector2(306f, -70f),
+            new Vector2(270f, 190f),
+            statusColor);
+        TextMeshProUGUI encoderTitle = CreateText(
+            encoderCard,
+            "Title",
+            "PHẢN HỒI ENCODER",
+            new Vector2(14f, -10f),
+            new Vector2(242f, 24f),
+            16,
+            true);
+        encoderTitle.color = titleColor;
+        hmiTelemetryEncoderText = CreateText(encoderCard, "EncoderCount", "Encoder count: 0", new Vector2(14f, -48f), new Vector2(242f, 26f), 16, false);
+        hmiTelemetryRotationsText = CreateText(encoderCard, "Rotations", "Số vòng quay: 0", new Vector2(14f, -88f), new Vector2(242f, 26f), 16, false);
+        hmiTelemetryAngleText = CreateText(encoderCard, "RotorAngle", "Góc rotor: 0°", new Vector2(14f, -128f), new Vector2(242f, 26f), 16, false);
+
+        Transform healthBand = MakeSubPanel(
+            telemetry,
+            "TelemetryHealth",
+            new Vector2(16f, -274f),
+            new Vector2(560f, 54f),
+            statusColor);
+        hmiTelemetryLastUpdateText = CreateText(
+            healthBand,
+            "LastUpdate",
+            "Telemetry gần nhất: --",
+            new Vector2(14f, -5f),
+            new Vector2(532f, 22f),
+            14,
+            false);
+        hmiTelemetryHealthText = CreateText(
+            healthBand,
+            "DataHealth",
+            "Dữ liệu: Đang chờ",
+            new Vector2(14f, -27f),
+            new Vector2(532f, 22f),
+            14,
+            true);
+    }
+
+    private void ApplyHmiInteractionMode()
+    {
+        bool telemetryOnly = IsTelemetryOnly;
+
+        if (hmiSetupCard != null)
+            hmiSetupCard.SetActive(!telemetryOnly);
+        if (hmiControlCard != null)
+            hmiControlCard.SetActive(!telemetryOnly);
+        if (hmiTelemetryCard != null)
+            hmiTelemetryCard.SetActive(telemetryOnly);
+
+        if (hmiTitleText != null)
+            hmiTitleText.text = telemetryOnly
+                ? "GIÁM SÁT ĐỘNG CƠ QUA RS485"
+                : "GIAO DIỆN ĐIỀU KHIỂN";
     }
 
     private void CreateCanvasHmiLegacy()
@@ -1909,6 +2487,54 @@ public class PLCController_v2 : MonoBehaviour
         return go.transform;
     }
 
+    private void CreateInstitutionHeader(Transform parent, Vector2 panelSize, Color brandRed)
+    {
+        GameObject logoBox = new GameObject("InstitutionLogo");
+        logoBox.transform.SetParent(parent, false);
+        RectTransform logoRect = logoBox.AddComponent<RectTransform>();
+        logoRect.anchorMin = new Vector2(0f, 1f);
+        logoRect.anchorMax = new Vector2(0f, 1f);
+        logoRect.pivot = new Vector2(0f, 1f);
+        logoRect.anchoredPosition = new Vector2(14f, -7f);
+        logoRect.sizeDelta = new Vector2(58f, 58f);
+        Image logoImage = logoBox.AddComponent<Image>();
+        logoImage.color = Color.white;
+        logoImage.raycastTarget = false;
+        logoImage.preserveAspect = true;
+        if (institutionLogo != null)
+            logoImage.sprite = institutionLogo;
+        AddShadow(logoBox, new Color(0f, 0f, 0f, 0.16f), new Vector2(0f, -3f));
+
+        if (institutionLogo == null)
+        {
+            TextMeshProUGUI fallbackLogo = CreateText(logoBox.transform, "FallbackLogoText", "PTIT", Vector2.zero, new Vector2(58f, 58f), 19, true);
+            RectTransform fallbackRect = fallbackLogo.rectTransform;
+            fallbackRect.anchorMin = Vector2.zero;
+            fallbackRect.anchorMax = Vector2.one;
+            fallbackRect.offsetMin = Vector2.zero;
+            fallbackRect.offsetMax = Vector2.zero;
+            fallbackLogo.alignment = TextAlignmentOptions.Center;
+            fallbackLogo.color = brandRed;
+        }
+
+        GameObject banner = new GameObject("InstitutionNameBanner");
+        banner.transform.SetParent(parent, false);
+        RectTransform bannerRect = banner.AddComponent<RectTransform>();
+        bannerRect.anchorMin = new Vector2(0f, 1f);
+        bannerRect.anchorMax = new Vector2(0f, 1f);
+        bannerRect.pivot = new Vector2(0f, 1f);
+        bannerRect.anchoredPosition = new Vector2(70f, -14f);
+        bannerRect.sizeDelta = new Vector2(panelSize.x - 84f, 44f);
+        Image bannerImage = banner.AddComponent<Image>();
+        bannerImage.color = brandRed;
+        bannerImage.raycastTarget = false;
+        AddShadow(banner, new Color(0f, 0f, 0f, 0.18f), new Vector2(0f, -4f));
+
+        TextMeshProUGUI nameText = CreateText(banner.transform, "InstitutionNameText", institutionName, new Vector2(18f, 0f), new Vector2(panelSize.x - 124f, 44f), 22, true);
+        nameText.alignment = TextAlignmentOptions.Center;
+        nameText.color = Color.white;
+    }
+
     private TMP_InputField CreateInputField(Transform parent, string name, string initial, Vector2 pos, Vector2 size, int fontSize)
     {
         GameObject go = new GameObject(name);
@@ -2034,6 +2660,78 @@ public class PLCController_v2 : MonoBehaviour
             hmiStatusText.text = $"Trạng thái: {stateText}";
             hmiStatusText.color = stateColor;
         }
+
+        if (IsTelemetryOnly)
+            UpdateTelemetryOnlyHmi();
+    }
+
+    private void UpdateTelemetryOnlyHmi()
+    {
+        const string green = "#14963A";
+        const string blue = "#0868D7";
+        const string orange = "#D96B00";
+        const string red = "#D7302F";
+
+        bool hasTelemetry = lastTelemetryReceivedRealtime >= 0f;
+        float telemetryAge = TelemetryAgeSeconds;
+        bool stale = !IsTelemetryFresh;
+
+        string connectionValue;
+        string connectionColor;
+        if (!IsPiOnline)
+        {
+            connectionValue = "MẤT KẾT NỐI";
+            connectionColor = red;
+        }
+        else if (stale)
+        {
+            connectionValue = "ONLINE / CHỜ DỮ LIỆU";
+            connectionColor = orange;
+        }
+        else
+        {
+            connectionValue = "ĐÃ KẾT NỐI";
+            connectionColor = green;
+        }
+
+        string motorValue = LatestTelemetry.running ? "RUN" : "STOP";
+        string motorColor = LatestTelemetry.running ? blue : red;
+        string direction = LatestTelemetry.direction ?? string.Empty;
+        string directionValue = direction.Equals("reverse", StringComparison.OrdinalIgnoreCase)
+            ? "NGƯỢC"
+            : (direction.Equals("forward", StringComparison.OrdinalIgnoreCase) ? "THUẬN" : "--");
+        float rotations = Mathf.Abs(LatestTelemetry.rotationsExact) > 0.0001f
+            ? LatestTelemetry.rotationsExact
+            : LatestTelemetry.rotations;
+
+        if (hmiTelemetryConnectionText != null)
+            hmiTelemetryConnectionText.text = $"Kết nối RS485: <color={connectionColor}>{connectionValue}</color>";
+        if (hmiTelemetryMotorText != null)
+            hmiTelemetryMotorText.text = $"Motor: <color={motorColor}>{motorValue}</color>";
+        if (hmiTelemetrySpeedText != null)
+            hmiTelemetrySpeedText.text = $"RPM thực tế: <color={green}>{Mathf.Abs(LatestTelemetry.speedRpm):F1}</color>";
+        if (hmiTelemetryDirectionText != null)
+            hmiTelemetryDirectionText.text = $"Chiều quay: <color={blue}>{directionValue}</color>";
+        if (hmiTelemetryEncoderText != null)
+            hmiTelemetryEncoderText.text = $"Encoder count: <color={green}>{LatestTelemetry.encoderCount}</color>";
+        if (hmiTelemetryRotationsText != null)
+            hmiTelemetryRotationsText.text = $"Số vòng quay: <color={green}>{rotations:F2}</color>";
+        if (hmiTelemetryAngleText != null)
+            hmiTelemetryAngleText.text = $"Góc rotor: <color={green}>{LatestTelemetry.angle:F1}°</color>";
+        if (hmiTelemetryLastUpdateText != null)
+            hmiTelemetryLastUpdateText.text = $"Telemetry gần nhất: {(hasTelemetry ? LastTelemetryReceivedAt : "--")}";
+
+        if (hmiTelemetryHealthText == null)
+            return;
+
+        if (!IsPiOnline)
+            hmiTelemetryHealthText.text = $"Dữ liệu: <color={red}>MẤT KẾT NỐI</color>";
+        else if (!hasTelemetry)
+            hmiTelemetryHealthText.text = $"Dữ liệu: <color={orange}>CHƯA NHẬN TELEMETRY</color>";
+        else if (stale)
+            hmiTelemetryHealthText.text = $"Dữ liệu: <color={orange}>CŨ ({telemetryAge:F1} giây)</color>";
+        else
+            hmiTelemetryHealthText.text = $"Dữ liệu: <color={green}>ĐANG NHẬN ({telemetryAge:F1} giây)</color>";
     }
 
     private void OnGUI()
@@ -2054,15 +2752,18 @@ public class PLCController_v2 : MonoBehaviour
         GUILayout.Label($"Direction: {LatestTelemetry.direction}");
         GUILayout.Label(LatestTelemetry.backendSynced ? "Backend: synced" : $"Backend: {LatestTelemetry.backendStatus}");
 
-        GUILayout.BeginHorizontal();
-        if (GUILayout.Button("ON", GUILayout.Height(36))) TurnOn();
-        if (GUILayout.Button("OFF", GUILayout.Height(36))) TurnOff();
-        GUILayout.EndHorizontal();
+        if (!IsTelemetryOnly)
+        {
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("ON", GUILayout.Height(36))) TurnOn();
+            if (GUILayout.Button("OFF", GUILayout.Height(36))) TurnOff();
+            GUILayout.EndHorizontal();
 
-        GUILayout.BeginHorizontal();
-        if (GUILayout.Button("Forward")) SetDirectionForward();
-        if (GUILayout.Button("Reverse")) SetDirectionReverse();
-        GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Forward")) SetDirectionForward();
+            if (GUILayout.Button("Reverse")) SetDirectionReverse();
+            GUILayout.EndHorizontal();
+        }
 
         GUILayout.EndArea();
     }
