@@ -51,7 +51,7 @@ Project van mo va chay mo phong trong Unity khi khong co PLC. De nhan du lieu th
 - RS-485 telemetry: `http://103.238.69.131:8080/rs485/telemetry`
 - Camera: duoc cau hinh tren component stream trong scene.
 
-Gateway, driver PLC, GX Works2, camera worker va cac script van hanh server khong nam trong repository nay. Khi trien khai sang server khac, cap nhat URL trong Inspector cua `PLCController_v2` va component camera cho phu hop.
+Repository co kem source gateway, thu vien giao tiep PLC, script build/test RS-485 va tai lieu van hanh. GX Works2, driver thiet bi va cac dich vu da cai tren Windows Server van phai duoc cai dat rieng. Khi trien khai sang server khac, cap nhat URL trong Inspector cua `PLCController_v2` va component camera cho phu hop.
 
 ## Cau truc repository
 
@@ -59,6 +59,12 @@ Gateway, driver PLC, GX Works2, camera worker va cac script van hanh server khon
 Assets/           Scene, script, prefab, model, texture va WebGL template
 Packages/         Danh sach Unity package va lock file
 ProjectSettings/  Cau hinh Unity, scene build va Player Settings
+gateway/          Source va executable gateway PLC/RS-485
+third_party/      Thu vien fxplc kem license va tai lieu goc
+ops/              Ghi chu van hanh phan cung va RS-485
+chats/            Nhat ky trien khai, handoff va template tai lieu
+*.md, *.pdf       Ke hoach, huong dan va manual phan cung
+*.bat             Lenh build/test gateway tren Windows Server
 ```
 
 ## Scene quan trong
@@ -68,6 +74,7 @@ ProjectSettings/  Cau hinh Unity, scene build va Player Settings
 
 ## Luu y
 
-- Khong commit cac thu muc do Unity sinh ra.
-- Khong dua log, snapshot camera, file BAT/PowerShell hay thong tin dang nhap server vao repository.
+- Khong commit cac thu muc do Unity sinh ra (`Library`, `Temp`, `Logs`, `UserSettings`).
+- Khong commit `build-webgl`, backup/recovery, log runtime hoac file IDE sinh tu dong.
+- Script van hanh va file BAT duoc luu trong repository, nhung khong duoc ghi mat khau/token truc tiep vao script.
 - Neu doi URL gateway, kiem tra ca gia tri serialize trong scene va gia tri mac dinh trong `Assets/PLCController_v2.cs`.
