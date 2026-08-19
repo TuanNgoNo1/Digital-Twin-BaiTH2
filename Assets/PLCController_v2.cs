@@ -2164,7 +2164,9 @@ public class PLCController_v2 : MonoBehaviour
             canvasHmiPanelRect.anchorMin = new Vector2(1f, 1f);
             canvasHmiPanelRect.anchorMax = new Vector2(1f, 1f);
             canvasHmiPanelRect.pivot = new Vector2(1f, 1f);
-            canvasHmiPanelRect.anchoredPosition = new Vector2(-32f, -52f);
+            // Leave a safe band below Bai 2's top navigation bar. The previous
+            // 52 px offset overlapped the navigation after WebGL canvas scaling.
+            canvasHmiPanelRect.anchoredPosition = new Vector2(-32f, -104f);
         }
         else
         {

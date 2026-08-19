@@ -19,7 +19,7 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
     {
         "1. \u0110\u1EA5u n\u1ED1i m\u1EA1ch \u0111i\u1EC1u khi\u1EC3n \u0111\u1ED9ng c\u01A1",
         "2. \u0110\u1EA5u n\u1ED1i encoder",
-        "\u0110\u1EA5u n\u1ED1i m\u1EA1ch l\u1EF1c",
+        "3. \u0110\u1EA5u n\u1ED1i m\u1EA1ch l\u1EF1c",
         "4. V\u1EADn h\u00E0nh"
     };
 
@@ -170,11 +170,14 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
         if (practicalView)
         {
             cameraFraming.designAspect = 16f / 9f;
-            cameraFraming.designVerticalFov = 68f;
-            mainCamera.transform.position = originalCameraPosition +
-                mainCamera.transform.forward * 0.45f +
-                mainCamera.transform.right * 0.044f -
-                mainCamera.transform.up * 0.062f;
+            cameraFraming.designVerticalFov = 56f;
+            cameraFraming.ApplyFraming();
+
+            if (TryCalculateBoardBounds(out Bounds boardBounds))
+                FrameCameraOnBoard(boardBounds);
+            else
+                mainCamera.transform.position = originalCameraPosition + mainCamera.transform.forward * 0.52f;
+
             practicalCameraApplied = true;
         }
         else
@@ -183,6 +186,97 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
         }
 
         cameraFraming.ApplyFraming();
+    }
+
+    private bool TryCalculateBoardBounds(out Bounds bounds)
+    {
+        bounds = default;
+        bool found = false;
+
+#if UNITY_2023_1_OR_NEWER
+        Renderer[] renderers = FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+#else
+        Renderer[] renderers = FindObjectsOfType<Renderer>();
+#endif
+        foreach (Renderer renderer in renderers)
+        {
+            if (renderer == null || !renderer.enabled || !renderer.gameObject.activeInHierarchy)
+                continue;
+
+            string rendererName = renderer.name;
+            bool isMainBoard = rendererName.Equals("Board", StringComparison.OrdinalIgnoreCase);
+            if (!isMainBoard && renderer.transform.parent != null)
+                isMainBoard = renderer.transform.parent.name.Equals("Board", StringComparison.OrdinalIgnoreCase);
+            if (!isMainBoard)
+                continue;
+
+            if (!found)
+            {
+                bounds = renderer.bounds;
+                found = true;
+            }
+            else
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+        }
+
+        if (found)
+            return true;
+
+        // FBX variants may suffix the board mesh name. Keep the fallback narrow so
+        // the horizontal table is not included in the framing target.
+        foreach (Renderer renderer in renderers)
+        {
+            if (renderer == null || !renderer.enabled || !renderer.gameObject.activeInHierarchy)
+                continue;
+
+            string rendererName = renderer.name;
+            if (rendererName.IndexOf("Board", StringComparison.OrdinalIgnoreCase) < 0 ||
+                rendererName.IndexOf("Table", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                continue;
+            }
+
+            if (!found)
+            {
+                bounds = renderer.bounds;
+                found = true;
+            }
+            else
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+        }
+
+        return found;
+    }
+
+    private void FrameCameraOnBoard(Bounds boardBounds)
+    {
+        Vector3 forward = mainCamera.transform.forward.normalized;
+        Vector3 right = mainCamera.transform.right.normalized;
+        Vector3 up = mainCamera.transform.up.normalized;
+        Vector3 extents = boardBounds.extents;
+
+        float halfWidth = Mathf.Abs(right.x) * extents.x + Mathf.Abs(right.y) * extents.y + Mathf.Abs(right.z) * extents.z;
+        float halfHeight = Mathf.Abs(up.x) * extents.x + Mathf.Abs(up.y) * extents.y + Mathf.Abs(up.z) * extents.z;
+        float halfDepth = Mathf.Abs(forward.x) * extents.x + Mathf.Abs(forward.y) * extents.y + Mathf.Abs(forward.z) * extents.z;
+
+        float verticalFov = Mathf.Clamp(mainCamera.fieldOfView, 1f, 170f) * Mathf.Deg2Rad;
+        float aspect = mainCamera.pixelHeight > 0
+            ? Mathf.Max(0.1f, (float)mainCamera.pixelWidth / mainCamera.pixelHeight)
+            : Mathf.Max(0.1f, (float)Screen.width / Mathf.Max(1, Screen.height));
+        float horizontalFov = 2f * Mathf.Atan(Mathf.Tan(verticalFov * 0.5f) * aspect);
+
+        // The Board occupies the central workspace between the two side cards.
+        // These fractions keep it clear of both cards while making it larger than
+        // the previous fixed-offset WebGL framing.
+        float verticalDistance = halfHeight / Mathf.Max(0.01f, Mathf.Tan(verticalFov * 0.5f) * 0.66f);
+        float horizontalDistance = halfWidth / Mathf.Max(0.01f, Mathf.Tan(horizontalFov * 0.5f) * 0.44f);
+        float distance = Mathf.Max(verticalDistance, horizontalDistance) + halfDepth;
+
+        mainCamera.transform.position = boardBounds.center - forward * distance;
     }
 
     private void RestoreCameraState()
