@@ -95,6 +95,22 @@ public class PLCController_v2 : MonoBehaviour
     public float rotorCorrectionThresholdDegrees = 2f;
     [Range(0f, 1f)]
     public float rotorCorrectionStrength = 0.35f;
+    [Tooltip("Fixed polarity from encoder angle to the local model axis. Keep this independent from forward/reverse travel direction.")]
+    public float rotorFeedbackModelDirection = -1f;
+    [Tooltip("Ignore a stale play-mode rotation saved on Rotor_Main and use a stable encoder-zero pose when the scene starts.")]
+    public bool useCanonicalRotorBaseRotation = true;
+    public Vector3 canonicalRotorBaseEuler = Vector3.zero;
+    [Tooltip("One-time mechanical phase calibration, in degrees. Keep zero unless the real shaft has a known fixed marker offset.")]
+    public float rotorFeedbackZeroOffsetDegrees = 0f;
+    [Range(0f, 1f)]
+    public float runningRotorCorrectionStrength = 0.08f;
+    [Min(1f)]
+    [Tooltip("Upper speed limit for closing the final encoder error after STOP. The actual correction uses the last real motor speed.")]
+    public float stoppedRotorCorrectionDegreesPerSecond = 180f;
+    [Min(0.05f)]
+    public float minimumStoppedRotorCorrectionSeconds = 0.2f;
+    [Min(0.1f)]
+    public float maximumStoppedRotorCorrectionSeconds = 1.2f;
 
     [Header("HMI demo fallback")]
     public bool showRuntimeHmi = false;
@@ -245,7 +261,13 @@ public class PLCController_v2 : MonoBehaviour
     private float nextMotorSafetyCheckTime;
     private float lastTelemetryReceivedRealtime = -1f;
     private string lastRotorCorrectionTelemetryTimestamp = string.Empty;
-    private int lastRotorCorrectionEncoderCount = int.MinValue;
+    private bool hasRotorFeedbackSample;
+    private bool hasStoppedRotorFeedbackTarget;
+    private Quaternion stoppedRotorFeedbackStart;
+    private Quaternion stoppedRotorFeedbackTarget;
+    private float stoppedRotorFeedbackStartedAt;
+    private float stoppedRotorFeedbackDuration;
+    private float lastRunningVisualDegreesPerSecond = 30f;
     private readonly List<BehaviourEnabledState> disabledMainCameraBehaviours = new List<BehaviourEnabledState>();
     private readonly List<LayerState> hmiLayerStates = new List<LayerState>();
 
@@ -346,6 +368,8 @@ public class PLCController_v2 : MonoBehaviour
                 : (controlMainCamera != null ? controlMainCamera.transform.forward : Vector3.forward);
             ConfigurePipCameras(viewForward);
         }
+
+        UpdateStoppedRotorFeedbackCorrection();
 
         if (!syncMotorModel || !visualMotorRunning || visualMotorRotor == null || visualDegreesPerSecond <= 0f)
             return;
@@ -1016,8 +1040,10 @@ public class PLCController_v2 : MonoBehaviour
         visualMotorRpm = shouldRun ? realRpm : 0f;
         visualDegreesPerSecond = visualMotorRpm * 6f;
         visualDirectionForward = isForward;
+        if (shouldRun && visualDegreesPerSecond > 0f)
+            lastRunningVisualDegreesPerSecond = visualDegreesPerSecond;
 
-        ApplyRotorFeedbackCorrection(isForward);
+        ApplyRotorFeedbackCorrection();
         ApplyVisualMotorDriverState(shouldRun, isForward);
 
         string targetName = visualMotorRotor != null ? visualMotorRotor.name : "none";
@@ -1130,11 +1156,44 @@ public class PLCController_v2 : MonoBehaviour
         if (visualRotorBaseCaptured || visualMotorRotor == null)
             return;
 
-        visualRotorBaseLocalRotation = visualMotorRotor.localRotation;
+        // Rotor_Main in the current scene contains a rotation left over from a
+        // previous Play session. That value is not encoder zero and must not be
+        // accumulated on top of the physical feedback angle.
+        visualRotorBaseLocalRotation = useCanonicalRotorBaseRotation
+            ? Quaternion.Euler(canonicalRotorBaseEuler)
+            : visualMotorRotor.localRotation;
         visualRotorBaseCaptured = true;
     }
 
-    private void ApplyRotorFeedbackCorrection(bool isForward)
+    private void UpdateStoppedRotorFeedbackCorrection()
+    {
+        if (!hasStoppedRotorFeedbackTarget || visualMotorRotor == null)
+            return;
+
+        float elapsed = Mathf.Max(0f, Time.unscaledTime - stoppedRotorFeedbackStartedAt);
+        float progress = stoppedRotorFeedbackDuration > 0.0001f
+            ? Mathf.Clamp01(elapsed / stoppedRotorFeedbackDuration)
+            : 1f;
+        float easedProgress = progress * progress * (3f - 2f * progress);
+        visualMotorRotor.localRotation = Quaternion.Slerp(
+            stoppedRotorFeedbackStart,
+            stoppedRotorFeedbackTarget,
+            easedProgress);
+
+        if (progress >= 1f)
+        {
+            visualMotorRotor.localRotation = stoppedRotorFeedbackTarget;
+            LastRotorCorrectionErrorDegrees = 0f;
+            hasStoppedRotorFeedbackTarget = false;
+            return;
+        }
+
+        LastRotorCorrectionErrorDegrees = Quaternion.Angle(
+            visualMotorRotor.localRotation,
+            stoppedRotorFeedbackTarget);
+    }
+
+    private void ApplyRotorFeedbackCorrection()
     {
         if (!correctRotorFromTelemetry || visualMotorRotor == null || !IsTelemetryFresh)
             return;
@@ -1142,12 +1201,10 @@ public class PLCController_v2 : MonoBehaviour
         string sampleTimestamp = LatestTelemetry.timestamp ?? string.Empty;
         bool sameTimestamp = !string.IsNullOrEmpty(sampleTimestamp)
             && sampleTimestamp.Equals(lastRotorCorrectionTelemetryTimestamp, StringComparison.Ordinal);
-        bool sameEncoderCount = LatestTelemetry.encoderCount == lastRotorCorrectionEncoderCount;
-        if (sameTimestamp || sameEncoderCount)
+        if (sameTimestamp)
             return;
 
         lastRotorCorrectionTelemetryTimestamp = sampleTimestamp;
-        lastRotorCorrectionEncoderCount = LatestTelemetry.encoderCount;
 
         CaptureVisualRotorBaseRotation();
         if (!visualRotorBaseCaptured)
@@ -1158,30 +1215,71 @@ public class PLCController_v2 : MonoBehaviour
         Vector3 axis = rotateBlades != null && rotateBlades.rotationAxis.sqrMagnitude > 0.0001f
             ? rotateBlades.rotationAxis.normalized
             : Vector3.forward;
-        float modelAngle = Mathf.Repeat(feedbackAngle, 360f) * (isForward ? -1f : 1f);
+        // Encoder is an absolute position. Its model-space polarity must remain fixed;
+        // changing the sign with the current travel direction mirrors the pose and can
+        // create an error of up to 180 degrees while the motor is reversing.
+        float modelDirection = Mathf.Approximately(rotorFeedbackModelDirection, 0f)
+            ? -1f
+            : Mathf.Sign(rotorFeedbackModelDirection);
+        float modelAngle = Mathf.Repeat(feedbackAngle, 360f) * modelDirection
+            + rotorFeedbackZeroOffsetDegrees;
         Quaternion expected = visualRotorBaseLocalRotation * Quaternion.AngleAxis(modelAngle, axis);
         LastRotorCorrectionErrorDegrees = Quaternion.Angle(visualMotorRotor.localRotation, expected);
 
-        if (LastRotorCorrectionErrorDegrees <= Mathf.Max(0f, rotorCorrectionThresholdDegrees))
+        // The first fresh frame is authoritative: pressing Play must start from
+        // the current physical encoder position, not from a pose saved in scene.
+        if (!hasRotorFeedbackSample)
+        {
+            hasRotorFeedbackSample = true;
+            hasStoppedRotorFeedbackTarget = false;
+            visualMotorRotor.localRotation = expected;
+            LastRotorCorrectionErrorDegrees = 0f;
             return;
+        }
 
+        if (LastRotorCorrectionErrorDegrees <= Mathf.Max(0f, rotorCorrectionThresholdDegrees))
+        {
+            hasStoppedRotorFeedbackTarget = false;
+            return;
+        }
+
+        if (!LatestTelemetry.running)
+        {
+            // Stop the RPM integrator first, then close the remaining telemetry
+            // error continuously in Update instead of visibly snapping backward.
+            if (hasStoppedRotorFeedbackTarget
+                && Quaternion.Angle(stoppedRotorFeedbackTarget, expected) <= 0.05f)
+                return;
+
+            float correctionSpeed = Mathf.Clamp(
+                lastRunningVisualDegreesPerSecond,
+                1f,
+                Mathf.Max(1f, stoppedRotorCorrectionDegreesPerSecond));
+            float correctionDuration = LastRotorCorrectionErrorDegrees / correctionSpeed;
+            stoppedRotorFeedbackStart = visualMotorRotor.localRotation;
+            stoppedRotorFeedbackTarget = expected;
+            stoppedRotorFeedbackStartedAt = Time.unscaledTime;
+            stoppedRotorFeedbackDuration = Mathf.Clamp(
+                correctionDuration,
+                Mathf.Max(0.05f, minimumStoppedRotorCorrectionSeconds),
+                Mathf.Max(minimumStoppedRotorCorrectionSeconds, maximumStoppedRotorCorrectionSeconds));
+            hasStoppedRotorFeedbackTarget = true;
+            return;
+        }
+
+        hasStoppedRotorFeedbackTarget = false;
         visualMotorRotor.localRotation = Quaternion.Slerp(
-            visualMotorRotor.localRotation,
-            expected,
-            Mathf.Clamp01(rotorCorrectionStrength));
+                visualMotorRotor.localRotation,
+                expected,
+                Mathf.Clamp01(runningRotorCorrectionStrength));
         LastRotorCorrectionErrorDegrees = Quaternion.Angle(visualMotorRotor.localRotation, expected);
     }
 
     private float ResolveRotorFeedbackAngleDegrees()
     {
-        if (Mathf.Abs(LatestTelemetry.angle) > 0.0001f)
-            return LatestTelemetry.angle;
-        if (Mathf.Abs(LatestTelemetry.rotationsExact) > 0.0001f)
-            return LatestTelemetry.rotationsExact * 360f;
-        if (LatestTelemetry.encoderCount != 0)
-            return LatestTelemetry.encoderCount / Mathf.Max(1f, encoderPulsesPerRevolution) * 360f;
-
-        return 0f;
+        // BAI 2 telemetry always supplies the physical encoder count, including zero.
+        // Use it as the single source of truth instead of command/derived fields.
+        return LatestTelemetry.encoderCount / Mathf.Max(1f, encoderPulsesPerRevolution) * 360f;
     }
 
     private float GetDisplayRpm()
