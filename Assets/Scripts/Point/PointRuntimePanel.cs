@@ -33,7 +33,8 @@ namespace PDTwin.Point
             public TextMeshProUGUI value;
         }
 
-        private const float DrawerWidth = 570f;
+        private const float DrawerWidth = 650f;
+        private TextMeshProUGUI drawerHeading;
         private readonly OverviewRow[] overviewRows = new OverviewRow[3];
         private readonly TextMeshProUGUI[] chipLabels = new TextMeshProUGUI[4];
         private readonly TextMeshProUGUI[] chipValues = new TextMeshProUGUI[4];
@@ -43,6 +44,12 @@ namespace PDTwin.Point
         private GameObject drawerOverlay;
         private RectTransform drawerRect;
         private GameObject confirmModal;
+        private GameObject testDetailLabel;
+        private GameObject testDetailCard;
+        private GameObject testDetailBack;
+        private GameObject actionsFooter;
+        private RectTransform bodyViewport;
+        private ScrollRect bodyScroll;
         private TextMeshProUGUI submissionState;
         private TextMeshProUGUI scoreText;
         private TextMeshProUGUI scoreCaption;
@@ -50,6 +57,7 @@ namespace PDTwin.Point
         private Image scoreRingFill;
         private TextMeshProUGUI testEyebrow;
         private TextMeshProUGUI testTitle;
+        private TextMeshProUGUI testInstructions;
         private TextMeshProUGUI testBadge;
         private Image testBadgeSurface;
         private TextMeshProUGUI statusText;
@@ -81,6 +89,8 @@ namespace PDTwin.Point
             PointRuntimePanel panel = root.AddComponent<PointRuntimePanel>();
             panel.statusBar = PDTwinStatusBar.Build(root.transform, panel.ToggleDrawer);
             panel.BuildDrawer(title);
+            panel.SetTestDetailsVisible(false);
+            root.AddComponent<PointOperationWorkspace>().Configure(panel.drawerOverlay, panel.drawerRect);
 
             Bai2RuntimeStatusProvider.Attach(root, panel.statusBar);
             Bai2RuntimeLayoutGuard.Attach(root);
@@ -94,11 +104,12 @@ namespace PDTwin.Point
                 return;
 
             float width = canvasRect.rect.width;
-            if (Mathf.Abs(width - lastCanvasWidth) < 0.5f)
-                return;
-
             lastCanvasWidth = width;
-            drawerRect.offsetMin = new Vector2(-Mathf.Min(DrawerWidth, Mathf.Max(320f, width)), 0f);
+            bool expanded = testDetailCard != null && testDetailCard.activeSelf;
+            drawerRect.offsetMin = new Vector2(-Mathf.Min(DrawerWidth,
+                Mathf.Max(320f, width)), 0f);
+            if (drawerHeading != null)
+                drawerHeading.text = expanded ? "BÀI THỰC HÀNH 2 • CHI TIẾT ĐIỂM" : "CHỌN BÀI TEST";
         }
 
         private void BuildDrawer(string title)
@@ -113,6 +124,7 @@ namespace PDTwin.Point
             scrimButton.targetGraphic = scrim.GetComponent<Image>();
             scrimButton.transition = Selectable.Transition.None;
             scrimButton.onClick.AddListener(CloseDrawer);
+            scrim.SetActive(false);
 
             GameObject drawer = PDTwinRuntimeUiFactory.CreateRect("ScoreDrawer", drawerOverlay.transform, PDTwinRuntimeTheme.Surface);
             drawerRect = drawer.GetComponent<RectTransform>();
@@ -138,7 +150,7 @@ namespace PDTwin.Point
             PDTwinRuntimeUiFactory.AnchorTop(header.GetComponent<RectTransform>(), 102f);
 
             TextMeshProUGUI eyebrow = PDTwinRuntimeUiFactory.CreateText(
-                "Eyebrow", header.transform, "PTIT • ĐÁNH GIÁ THỰC HÀNH", 13f,
+                "Eyebrow", header.transform, "PTIT • ĐÁNH GIÁ THỰC HÀNH", 16f,
                 new Color(1f, 1f, 1f, 0.84f), FontStyles.Bold);
             PlaceStretch(eyebrow.rectTransform, 24f, 55f, 70f, 17f);
 
@@ -147,6 +159,7 @@ namespace PDTwin.Point
                 string.IsNullOrWhiteSpace(title) ? "BÀI THỰC HÀNH 1 • CHI TIẾT ĐIỂM" : title,
                 25f, Color.white, FontStyles.Bold);
             PlaceStretch(heading.rectTransform, 24f, 17f, 70f, 40f);
+            drawerHeading = heading;
 
             Button close = PDTwinRuntimeUiFactory.CreateButton(
                 "CloseButton", header.transform, "×", new Color(1f, 1f, 1f, 0.18f), Color.white, 29f);
@@ -162,6 +175,7 @@ namespace PDTwin.Point
         {
             GameObject viewport = PDTwinRuntimeUiFactory.CreateRect("BodyViewport", parent, PDTwinRuntimeTheme.SurfaceMuted);
             RectTransform viewportRect = viewport.GetComponent<RectTransform>();
+            bodyViewport = viewportRect;
             viewportRect.anchorMin = Vector2.zero;
             viewportRect.anchorMax = Vector2.one;
             viewportRect.offsetMin = new Vector2(0f, 90f);
@@ -169,6 +183,7 @@ namespace PDTwin.Point
             viewport.AddComponent<RectMask2D>();
 
             ScrollRect scroll = viewport.AddComponent<ScrollRect>();
+            bodyScroll = scroll;
             scroll.horizontal = false;
             scroll.vertical = true;
             scroll.movementType = ScrollRect.MovementType.Clamped;
@@ -200,18 +215,23 @@ namespace PDTwin.Point
 
             BuildSubmissionPill(body.transform);
             BuildScoreCard(body.transform);
-            MakeSectionLabel(body.transform, "TỔNG QUAN THÀNH PHẦN ĐIỂM");
+            MakeSectionLabel(body.transform, "CHỌN BÀI TEST ĐỂ XEM CHI TIẾT");
             for (int i = 0; i < overviewRows.Length; i++)
                 overviewRows[i] = BuildOverviewRow(body.transform, i);
-            MakeSectionLabel(body.transform, "TEST ĐANG HIỂN THỊ");
+            testDetailLabel = MakeSectionLabel(body.transform, "CHI TIẾT TEST").gameObject;
+            Button back = PDTwinRuntimeUiFactory.CreateButton("BackToOverview", body.transform,
+                "← Tổng quan", PDTwinRuntimeTheme.SurfaceMuted, PDTwinRuntimeTheme.Ink, 15f);
+            back.gameObject.AddComponent<LayoutElement>().preferredHeight = 44f;
+            back.onClick.AddListener(() => SetTestDetailsVisible(false));
+            testDetailBack = back.gameObject;
             BuildTestCard(body.transform);
         }
 
         private void BuildSubmissionPill(Transform parent)
         {
-            GameObject pill = CreateLayoutCard("SubmissionPill", parent, PDTwinRuntimeTheme.PtitRedSoft, 38f);
+            GameObject pill = CreateLayoutCard("SubmissionPill", parent, PDTwinRuntimeTheme.PtitRedSoft, 44f);
             submissionState = PDTwinRuntimeUiFactory.CreateText(
-                "State", pill.transform, "●  Điểm tạm • chưa nộp bài", 13f,
+                "State", pill.transform, "●  Điểm tạm • chưa nộp bài", 18f,
                 PDTwinRuntimeTheme.PtitRedDark, FontStyles.Bold);
             PDTwinRuntimeUiFactory.Stretch(submissionState.rectTransform, 12f, 5f, 12f, 5f);
         }
@@ -244,8 +264,8 @@ namespace PDTwin.Point
 
             scoreText = PDTwinRuntimeUiFactory.CreateText("Score", card.transform, "0.00 / 10", 29f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
             PlaceStretch(scoreText.rectTransform, 112f, 52f, 18f, 42f);
-            scoreCaption = PDTwinRuntimeUiFactory.CreateText("Caption", card.transform, "Điểm tốt nhất đã được hệ thống xác nhận", 13f, PDTwinRuntimeTheme.Muted);
-            PlaceStretch(scoreCaption.rectTransform, 112f, 20f, 18f, 31f);
+            scoreCaption = PDTwinRuntimeUiFactory.CreateText("Caption", card.transform, "Điểm tốt nhất đã được hệ thống xác nhận", 18f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
+            PlaceStretch(scoreCaption.rectTransform, 112f, 12f, 18f, 37f);
         }
 
         private OverviewRow BuildOverviewRow(Transform parent, int rowIndex)
@@ -259,7 +279,10 @@ namespace PDTwin.Point
             {
                 OverviewRow selectedRow = overviewRows[capturedIndex];
                 if (selectedRow != null && selectedRow.testIndex >= 0)
+                {
                     ReviewTestRequested?.Invoke(selectedRow.testIndex);
+                    SetTestDetailsVisible(true);
+                }
             });
 
             Outline outline = card.AddComponent<Outline>();
@@ -275,13 +298,13 @@ namespace PDTwin.Point
             dotRect.anchoredPosition = new Vector2(15f, 0f);
             dotRect.sizeDelta = new Vector2(13f, 13f);
 
-            TextMeshProUGUI title = PDTwinRuntimeUiFactory.CreateText("Title", card.transform, "Thành phần điểm", 15f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
-            Place(title.rectTransform, 39f, 38f, 280f, 25f);
-            TextMeshProUGUI evidence = PDTwinRuntimeUiFactory.CreateText("Evidence", card.transform, "Chưa có dữ liệu", 12.5f, PDTwinRuntimeTheme.Muted);
-            PlaceStretch(evidence.rectTransform, 39f, 10f, 155f, 29f);
-            TextMeshProUGUI state = PDTwinRuntimeUiFactory.CreateText("State", card.transform, "CHƯA CHẤM", 11f, PDTwinRuntimeTheme.Muted, FontStyles.Bold, TextAlignmentOptions.Right);
+            TextMeshProUGUI title = PDTwinRuntimeUiFactory.CreateText("Title", card.transform, "Thành phần điểm", 23f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
+            Place(title.rectTransform, 39f, 18f, 370f, 43f);
+            TextMeshProUGUI evidence = PDTwinRuntimeUiFactory.CreateText("Evidence", card.transform, "Chưa có dữ liệu", 15f, PDTwinRuntimeTheme.Muted);
+            evidence.gameObject.SetActive(false);
+            TextMeshProUGUI state = PDTwinRuntimeUiFactory.CreateText("State", card.transform, "CHƯA CHẤM", 18f, PDTwinRuntimeTheme.Ink, FontStyles.Bold, TextAlignmentOptions.Right);
             PlaceRight(state.rectTransform, 16f, 42f, 125f, 22f);
-            TextMeshProUGUI score = PDTwinRuntimeUiFactory.CreateText("Score", card.transform, "0.00 / 0.00", 15f, PDTwinRuntimeTheme.Ink, FontStyles.Bold, TextAlignmentOptions.Right);
+            TextMeshProUGUI score = PDTwinRuntimeUiFactory.CreateText("Score", card.transform, "0.00 / 0.00", 18f, PDTwinRuntimeTheme.Ink, FontStyles.Bold, TextAlignmentOptions.Right);
             PlaceRight(score.rectTransform, 16f, 11f, 145f, 28f);
 
             return new OverviewRow { card = card.GetComponent<Image>(), dot = dot, title = title, evidence = evidence, state = state, score = score, button = button, outline = outline };
@@ -289,17 +312,22 @@ namespace PDTwin.Point
 
         private void BuildTestCard(Transform parent)
         {
-            const float cardHeight = 590f;
+            const float cardHeight = 690f;
             GameObject card = CreateLayoutCard("TestCard", parent, PDTwinRuntimeTheme.Surface, cardHeight);
+            testDetailCard = card;
 
-            testEyebrow = PDTwinRuntimeUiFactory.CreateText("Eyebrow", card.transform, "TEST 1 • CHẾ ĐỘ SỐ VÒNG", 12f, PDTwinRuntimeTheme.PtitRedDark, FontStyles.Bold);
-            PlaceStretch(testEyebrow.rectTransform, 17f, 546f, 110f, 22f);
-            testTitle = PDTwinRuntimeUiFactory.CreateText("Title", card.transform, "Quay thuận 1 vòng ở 10 RPM", 19f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
-            PlaceStretch(testTitle.rectTransform, 17f, 511f, 110f, 34f);
+            testEyebrow = PDTwinRuntimeUiFactory.CreateText("Eyebrow", card.transform, "TEST 1 • CHẾ ĐỘ SỐ VÒNG", 17f, PDTwinRuntimeTheme.PtitRedDark, FontStyles.Bold);
+            PlaceStretch(testEyebrow.rectTransform, 17f, 646f, 110f, 26f);
+            testTitle = PDTwinRuntimeUiFactory.CreateText("Title", card.transform, "Quay thuận 1 vòng ở 10 RPM", 25f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
+            PlaceStretch(testTitle.rectTransform, 17f, 605f, 110f, 42f);
+
+            testInstructions = PDTwinRuntimeUiFactory.CreateText("Instructions", card.transform,
+                string.Empty, 18f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
+            PlaceStretch(testInstructions.rectTransform, 17f, 535f, 17f, 66f);
 
             testBadgeSurface = PDTwinRuntimeUiFactory.CreateRect("Badge", card.transform, PDTwinRuntimeTheme.WarningSoft, true).GetComponent<Image>();
-            PlaceRight(testBadgeSurface.rectTransform, 16f, 522f, 92f, 38f);
-            testBadge = PDTwinRuntimeUiFactory.CreateText("Label", testBadgeSurface.transform, "SẴN SÀNG", 11f, PDTwinRuntimeTheme.Warning, FontStyles.Bold, TextAlignmentOptions.Center);
+            PlaceRight(testBadgeSurface.rectTransform, 16f, 622f, 92f, 38f);
+            testBadge = PDTwinRuntimeUiFactory.CreateText("Label", testBadgeSurface.transform, "SẴN SÀNG", 15f, PDTwinRuntimeTheme.Warning, FontStyles.Bold, TextAlignmentOptions.Center);
             PDTwinRuntimeUiFactory.Stretch(testBadge.rectTransform, 5f, 4f, 5f, 4f);
 
             GameObject chipRow = new GameObject("Targets", typeof(RectTransform), typeof(HorizontalLayoutGroup));
@@ -308,8 +336,8 @@ namespace PDTwin.Point
             chipRowRect.anchorMin = new Vector2(0f, 1f);
             chipRowRect.anchorMax = new Vector2(1f, 1f);
             chipRowRect.pivot = new Vector2(0.5f, 1f);
-            chipRowRect.offsetMin = new Vector2(16f, -166f);
-            chipRowRect.offsetMax = new Vector2(-16f, -82f);
+            chipRowRect.offsetMin = new Vector2(16f, -240f);
+            chipRowRect.offsetMax = new Vector2(-16f, -156f);
             HorizontalLayoutGroup chipLayout = chipRow.GetComponent<HorizontalLayoutGroup>();
             chipLayout.spacing = 8f;
             chipLayout.childControlWidth = true;
@@ -320,9 +348,9 @@ namespace PDTwin.Point
             for (int i = 0; i < 4; i++)
             {
                 GameObject chip = PDTwinRuntimeUiFactory.CreateRect("Target_" + i, chipRow.transform, PDTwinRuntimeTheme.SurfaceMuted, true);
-                chipLabels[i] = PDTwinRuntimeUiFactory.CreateText("Label", chip.transform, "MỤC TIÊU", 10f, PDTwinRuntimeTheme.Muted, FontStyles.Bold, TextAlignmentOptions.Center);
+                chipLabels[i] = PDTwinRuntimeUiFactory.CreateText("Label", chip.transform, "MỤC TIÊU", 15f, PDTwinRuntimeTheme.Ink, FontStyles.Bold, TextAlignmentOptions.Center);
                 PlaceStretch(chipLabels[i].rectTransform, 5f, 43f, 5f, 20f);
-                chipValues[i] = PDTwinRuntimeUiFactory.CreateText("Value", chip.transform, "—", 14f, PDTwinRuntimeTheme.Ink, FontStyles.Bold, TextAlignmentOptions.Center);
+                chipValues[i] = PDTwinRuntimeUiFactory.CreateText("Value", chip.transform, "—", 19f, PDTwinRuntimeTheme.Ink, FontStyles.Bold, TextAlignmentOptions.Center);
                 PlaceStretch(chipValues[i].rectTransform, 5f, 13f, 5f, 30f);
             }
 
@@ -333,9 +361,9 @@ namespace PDTwin.Point
             statusRect.anchorMin = new Vector2(0f, 1f);
             statusRect.anchorMax = new Vector2(1f, 1f);
             statusRect.pivot = new Vector2(0.5f, 1f);
-            statusRect.offsetMin = new Vector2(16f, -471f);
-            statusRect.offsetMax = new Vector2(-16f, -383f);
-            statusText = PDTwinRuntimeUiFactory.CreateText("Status", statusCard.transform, "Hệ thống đang chuẩn bị dữ liệu chấm.", 13.5f, PDTwinRuntimeTheme.Warning, FontStyles.Bold);
+            statusRect.offsetMin = new Vector2(16f, -545f);
+            statusRect.offsetMax = new Vector2(-16f, -457f);
+            statusText = PDTwinRuntimeUiFactory.CreateText("Status", statusCard.transform, "Hệ thống đang chuẩn bị dữ liệu chấm.", 18f, PDTwinRuntimeTheme.Warning, FontStyles.Bold);
             PDTwinRuntimeUiFactory.Stretch(statusText.rectTransform, 14f, 10f, 14f, 10f);
 
             GameObject attemptCard = PDTwinRuntimeUiFactory.CreateRect("AttemptSummary", card.transform, PDTwinRuntimeTheme.SurfaceMuted, true);
@@ -343,12 +371,12 @@ namespace PDTwin.Point
             attemptRect.anchorMin = new Vector2(0f, 1f);
             attemptRect.anchorMax = new Vector2(1f, 1f);
             attemptRect.pivot = new Vector2(0.5f, 1f);
-            attemptRect.offsetMin = new Vector2(16f, -573f);
-            attemptRect.offsetMax = new Vector2(-16f, -484f);
-            TextMeshProUGUI label = PDTwinRuntimeUiFactory.CreateText("Label", attemptCard.transform, "TRẠNG THÁI LƯỢT CHẤM", 10.5f, PDTwinRuntimeTheme.Muted, FontStyles.Bold);
-            PlaceStretch(label.rectTransform, 13f, 50f, 13f, 20f);
-            attemptText = PDTwinRuntimeUiFactory.CreateText("Summary", attemptCard.transform, "Có tối đa 3 lượt nếu chưa đạt.", 13f, PDTwinRuntimeTheme.Ink);
-            PlaceStretch(attemptText.rectTransform, 13f, 12f, 13f, 37f);
+            attemptRect.offsetMin = new Vector2(16f, -647f);
+            attemptRect.offsetMax = new Vector2(-16f, -558f);
+            TextMeshProUGUI label = PDTwinRuntimeUiFactory.CreateText("Label", attemptCard.transform, "TRẠNG THÁI LƯỢT CHẤM", 16f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
+            PlaceStretch(label.rectTransform, 13f, 60f, 13f, 20f);
+            attemptText = PDTwinRuntimeUiFactory.CreateText("Summary", attemptCard.transform, "Có tối đa 3 lượt nếu chưa đạt.", 18f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
+            PlaceStretch(attemptText.rectTransform, 13f, 8f, 13f, 48f);
         }
 
         private void BuildEvidenceTable(Transform parent)
@@ -358,8 +386,8 @@ namespace PDTwin.Point
             tableRect.anchorMin = new Vector2(0f, 1f);
             tableRect.anchorMax = new Vector2(1f, 1f);
             tableRect.pivot = new Vector2(0.5f, 1f);
-            tableRect.offsetMin = new Vector2(16f, -370f);
-            tableRect.offsetMax = new Vector2(-16f, -178f);
+            tableRect.offsetMin = new Vector2(16f, -444f);
+            tableRect.offsetMax = new Vector2(-16f, -252f);
             Outline outline = table.AddComponent<Outline>();
             outline.effectColor = PDTwinRuntimeTheme.Border;
             outline.effectDistance = new Vector2(1f, -1f);
@@ -389,11 +417,11 @@ namespace PDTwin.Point
                     Color.white, FontStyles.Bold, TextAlignmentOptions.Center);
                 PDTwinRuntimeUiFactory.Stretch(marker.rectTransform);
 
-                TextMeshProUGUI label = PDTwinRuntimeUiFactory.CreateText("Label", row.transform, defaults[i], 13.5f,
-                    PDTwinRuntimeTheme.Ink, FontStyles.Normal);
+                TextMeshProUGUI label = PDTwinRuntimeUiFactory.CreateText("Label", row.transform, defaults[i], 18f,
+                    PDTwinRuntimeTheme.Ink, FontStyles.Bold);
                 PlaceStretch(label.rectTransform, 48f, 11f, 330f, 27f);
 
-                TextMeshProUGUI value = PDTwinRuntimeUiFactory.CreateText("Value", row.transform, "Chưa có dữ liệu", 12.5f,
+                TextMeshProUGUI value = PDTwinRuntimeUiFactory.CreateText("Value", row.transform, "Chưa có dữ liệu", 17f,
                     PDTwinRuntimeTheme.Ink, FontStyles.Bold, TextAlignmentOptions.Right);
                 PlaceRight(value.rectTransform, 13f, 9f, 300f, 30f);
                 evidenceRows[i] = new EvidenceRow { badge = badge, marker = marker, label = label, value = value };
@@ -403,6 +431,7 @@ namespace PDTwin.Point
         private void BuildFooter(Transform parent)
         {
             GameObject footer = PDTwinRuntimeUiFactory.CreateRect("Footer", parent, PDTwinRuntimeTheme.Surface);
+            actionsFooter = footer;
             PDTwinRuntimeUiFactory.AnchorBottom(footer.GetComponent<RectTransform>(), 90f);
             GameObject divider = PDTwinRuntimeUiFactory.CreateRect("Divider", footer.transform, PDTwinRuntimeTheme.Border);
             PDTwinRuntimeUiFactory.AnchorTop(divider.GetComponent<RectTransform>(), 1f);
@@ -417,8 +446,8 @@ namespace PDTwin.Point
             layout.childForceExpandHeight = true;
             layout.childForceExpandWidth = true;
 
-            primaryButton = PDTwinRuntimeUiFactory.CreateButton("PrimaryAction", row.transform, "BẮT ĐẦU CHẤM TEST 1", PDTwinRuntimeTheme.PtitRed, Color.white, 13.5f);
-            submitButton = PDTwinRuntimeUiFactory.CreateButton("SubmitAction", row.transform, "XEM LẠI VÀ NỘP", PDTwinRuntimeTheme.SurfaceMuted, PDTwinRuntimeTheme.Muted, 13.5f);
+            primaryButton = PDTwinRuntimeUiFactory.CreateButton("PrimaryAction", row.transform, "BẮT ĐẦU CHẤM TEST 1", PDTwinRuntimeTheme.PtitRed, Color.white, 17f);
+            submitButton = PDTwinRuntimeUiFactory.CreateButton("SubmitAction", row.transform, "XEM LẠI VÀ NỘP", PDTwinRuntimeTheme.SurfaceMuted, PDTwinRuntimeTheme.Ink, 17f);
             primaryButton.onClick.AddListener(() => PrimaryRequested?.Invoke());
             submitButton.onClick.AddListener(() => confirmModal.SetActive(true));
         }
@@ -501,11 +530,10 @@ namespace PDTwin.Point
                     continue;
                 PointCriterionView item = items[i];
                 row.title.text = item.title ?? string.Empty;
-                row.evidence.text = item.evidence ?? string.Empty;
                 row.state.text = item.state ?? string.Empty;
                 row.score.text = $"{item.earned:F2} / {item.maximum:F2}";
                 row.dot.color = PDTwinRuntimeTheme.HealthColor(item.health);
-                row.state.color = PDTwinRuntimeTheme.HealthColor(item.health);
+                row.state.color = PDTwinRuntimeTheme.Ink;
                 row.card.color = item.selected ? PDTwinRuntimeTheme.PtitRedSoft : PDTwinRuntimeTheme.Surface;
                 row.outline.enabled = item.selected;
                 row.button.interactable = item.interactive;
@@ -518,8 +546,13 @@ namespace PDTwin.Point
             testEyebrow.text = eyebrow ?? string.Empty;
             testTitle.text = title ?? string.Empty;
             testBadge.text = badge ?? string.Empty;
-            testBadge.color = PDTwinRuntimeTheme.HealthColor(health);
+            testBadge.color = PDTwinRuntimeTheme.Ink;
             testBadgeSurface.color = PDTwinRuntimeTheme.HealthSurface(health);
+        }
+
+        public void SetTestInstructions(string value)
+        {
+            testInstructions.text = value ?? string.Empty;
         }
 
         public void SetTargetChips(string[] labels, string[] values)
@@ -542,9 +575,7 @@ namespace PDTwin.Point
                 if (labels != null && i < labels.Length && !string.IsNullOrWhiteSpace(labels[i]))
                     row.label.text = labels[i];
                 row.value.text = values != null && i < values.Length ? values[i] ?? "—" : "—";
-                row.value.color = rowHealth == RuntimeHealth.Offline
-                    ? PDTwinRuntimeTheme.Danger
-                    : rowHealth == RuntimeHealth.Online ? PDTwinRuntimeTheme.Success : PDTwinRuntimeTheme.Ink;
+                row.value.color = PDTwinRuntimeTheme.Ink;
                 row.badge.color = PDTwinRuntimeTheme.HealthColor(rowHealth);
                 row.marker.text = rowHealth == RuntimeHealth.Online ? "✓"
                     : rowHealth == RuntimeHealth.Offline ? "!"
@@ -555,7 +586,7 @@ namespace PDTwin.Point
         public void SetStatus(string value, RuntimeHealth health = RuntimeHealth.Warning)
         {
             statusText.text = string.IsNullOrWhiteSpace(value) ? "Chưa có dữ liệu chấm." : value;
-            statusText.color = PDTwinRuntimeTheme.HealthColor(health);
+            statusText.color = PDTwinRuntimeTheme.Ink;
             statusCard.color = PDTwinRuntimeTheme.HealthSurface(health);
         }
 
@@ -566,9 +597,9 @@ namespace PDTwin.Point
 
         public void SetActions(string primaryLabel, bool primaryEnabled, bool submitEnabled)
         {
-            SetButtonAppearance(primaryButton, primaryLabel, primaryEnabled ? PDTwinRuntimeTheme.PtitRed : PDTwinRuntimeTheme.SurfaceMuted, primaryEnabled ? Color.white : PDTwinRuntimeTheme.Muted);
+            SetButtonAppearance(primaryButton, primaryLabel, primaryEnabled ? PDTwinRuntimeTheme.PtitRed : PDTwinRuntimeTheme.SurfaceMuted, primaryEnabled ? Color.white : PDTwinRuntimeTheme.Ink);
             primaryButton.interactable = primaryEnabled;
-            SetButtonAppearance(submitButton, "XEM LẠI VÀ NỘP", submitEnabled ? PDTwinRuntimeTheme.PtitRed : PDTwinRuntimeTheme.SurfaceMuted, submitEnabled ? Color.white : PDTwinRuntimeTheme.Muted);
+            SetButtonAppearance(submitButton, "XEM LẠI VÀ NỘP", submitEnabled ? PDTwinRuntimeTheme.PtitRed : PDTwinRuntimeTheme.SurfaceMuted, submitEnabled ? Color.white : PDTwinRuntimeTheme.Ink);
             submitButton.interactable = submitEnabled;
         }
 
@@ -578,10 +609,30 @@ namespace PDTwin.Point
             SetActions("ĐÃ KHÓA BÀI", false, false);
         }
 
+        public void OpenTestOverview()
+        {
+            SetTestDetailsVisible(false);
+            drawerOverlay.SetActive(true);
+        }
+
         private void ToggleDrawer()
         {
             if (drawerOverlay != null)
+            {
+                if (!drawerOverlay.activeSelf) SetTestDetailsVisible(false);
                 drawerOverlay.SetActive(!drawerOverlay.activeSelf);
+            }
+        }
+
+        public void SetTestDetailsVisible(bool visible)
+        {
+            testDetailLabel.SetActive(visible);
+            testDetailBack.SetActive(visible);
+            testDetailCard.SetActive(visible);
+            actionsFooter.SetActive(visible);
+            bodyViewport.offsetMin = new Vector2(0f, visible ? 90f : 0f);
+            Canvas.ForceUpdateCanvases();
+            bodyScroll.verticalNormalizedPosition = visible ? 0f : 1f;
         }
 
         private void CloseDrawer()
@@ -601,10 +652,10 @@ namespace PDTwin.Point
 
         private static TextMeshProUGUI MakeSectionLabel(Transform parent, string value)
         {
-            TextMeshProUGUI label = PDTwinRuntimeUiFactory.CreateText("SectionLabel", parent, value, 11f, PDTwinRuntimeTheme.Muted, FontStyles.Bold);
+            TextMeshProUGUI label = PDTwinRuntimeUiFactory.CreateText("SectionLabel", parent, value, 17f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
             LayoutElement element = label.gameObject.AddComponent<LayoutElement>();
-            element.preferredHeight = 24f;
-            element.minHeight = 24f;
+            element.preferredHeight = 30f;
+            element.minHeight = 30f;
             return label;
         }
 

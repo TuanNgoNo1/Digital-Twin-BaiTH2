@@ -29,12 +29,25 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
     private Vector3 originalCameraPosition;
     private float originalDesignAspect;
     private float originalDesignVerticalFov;
+    private Rect originalCameraRect;
+    private Color originalCameraBackground;
+    private CameraClearFlags originalCameraClearFlags;
+    private RectTransform modelViewport;
+    private GameObject modelWhiteBackground;
+    private Material modelWhiteBackgroundMaterial;
+    private SceneAuthoredWiringBoard wiringBoard;
+    private Button previousStepButton;
     private bool cameraStateCaptured;
     private bool practicalCameraApplied;
 
     private GameObject workspaceRoot;
     private GameObject workspaceMaskRoot;
     private GameObject guideReturnRoot;
+    private GameObject helpButtonRoot;
+    private GameObject helpPopupRoot;
+    private TextMeshProUGUI helpTitle;
+    private TextMeshProUGUI helpBody;
+    private bool operationHelpShown;
     private TextMeshProUGUI instructionText;
     private TextMeshProUGUI wireGuideText;
     private readonly List<GameObject> wireRows = new List<GameObject>();
@@ -54,6 +67,8 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
     private int lastScreenHeight;
     private bool initialized;
     private static Sprite roundedRectangleSprite;
+
+    public bool IsGuidePopupVisible => helpPopupRoot != null && helpPopupRoot.activeInHierarchy;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     private static void RegisterSceneHook()
@@ -98,9 +113,11 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
         }
 
         CaptureCameraState();
+        wiringBoard = FindFirstObjectByType<SceneAuthoredWiringBoard>();
         HideLegacyWorkspaceUi();
         CreateWorkspace();
         StyleExistingNavigation();
+        CreateHelpUi();
         initialized = true;
         Refresh(true);
     }
@@ -118,6 +135,10 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
     private void OnDestroy()
     {
         RestoreCameraState();
+        if (modelWhiteBackground != null) Destroy(modelWhiteBackground);
+        if (modelWhiteBackgroundMaterial != null) Destroy(modelWhiteBackgroundMaterial);
+        if (helpButtonRoot != null) Destroy(helpButtonRoot);
+        if (helpPopupRoot != null) Destroy(helpPopupRoot);
     }
 
     private void Refresh(bool rebuildStepContent)
@@ -129,21 +150,129 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
             workspaceRoot.SetActive(showWorkspace);
         if (workspaceMaskRoot != null && workspaceMaskRoot.activeSelf != showWorkspace)
             workspaceMaskRoot.SetActive(showWorkspace);
+        if (helpButtonRoot != null)
+            helpButtonRoot.SetActive(visibleStep == HmiStepIndex);
 
         if (guideReturnRoot == null)
             guideReturnRoot = GameObject.Find("GuideReturn_Canvas");
-        if (guideReturnRoot != null && guideReturnRoot.activeSelf)
-            guideReturnRoot.SetActive(false);
+        if (guideReturnRoot != null)
+        {
+            guideReturnRoot.SetActive(showWorkspace);
+            RectTransform returnButton = guideReturnRoot.transform.Find("GuideReturnButton") as RectTransform;
+            if (returnButton != null)
+                returnButton.anchoredPosition = new Vector2(52f, 28f);
+        }
 
+        if (wiringBoard != null) wiringBoard.ShowWiringView(showWorkspace);
         ApplyCameraState(showWorkspace);
         StyleNavigation(visibleStep);
+        if (previousStepButton != null) previousStepButton.interactable = visibleStep > 0;
 
         if (showWorkspace && rebuildStepContent)
             UpdateWorkspaceContent(visibleStep);
 
+        if (visibleStep != lastVisibleStep)
+        {
+            HideGuidePopup();
+            if (visibleStep == HmiStepIndex && !operationHelpShown)
+            {
+                operationHelpShown = true;
+                ShowGuidePopup();
+            }
+        }
+
         lastVisibleStep = visibleStep;
         lastScreenWidth = Screen.width;
         lastScreenHeight = Screen.height;
+    }
+
+    private void CreateHelpUi()
+    {
+        helpButtonRoot = CreateOverlayCanvas("Bai2Help_Canvas", 4950, true);
+        GameObject open = CreateWorkspaceCard(helpButtonRoot.transform, "ViewGuideButton",
+            new Vector2(52f, 958f), new Vector2(230f, 52f),
+            new Color(0.85f, 0.18f, 0.22f), new Color(0f, 0f, 0f, 0.08f));
+        open.GetComponent<Image>().color = new Color32(202, 20, 23, 255);
+        AddHelpButton(open, "XEM LẠI HƯỚNG DẪN", ShowGuidePopup, Color.white);
+        TextMeshProUGUI helpLabel = open.GetComponentInChildren<TextMeshProUGUI>();
+        helpLabel.fontSize = 15f;
+        RectTransform openRect = open.GetComponent<RectTransform>();
+        openRect.anchorMin = openRect.anchorMax = openRect.pivot = Vector2.zero;
+        openRect.anchoredPosition = new Vector2(52f, 28f);
+        foreach (string suffix in new[] { "_Border", "_Shadow" })
+        {
+            RectTransform decoration = helpButtonRoot.transform.Find("ViewGuideButton" + suffix) as RectTransform;
+            decoration.anchorMin = decoration.anchorMax = decoration.pivot = Vector2.zero;
+            decoration.anchoredPosition = openRect.anchoredPosition +
+                (suffix == "_Border" ? new Vector2(-2f, -2f) : new Vector2(4f, -5f));
+        }
+
+        helpPopupRoot = CreateOverlayCanvas("Bai2GuidePopup_Canvas", 6100, true);
+        GameObject dimmer = CreateImage(helpPopupRoot.transform, "Backdrop", new Color(0.06f, 0.09f, 0.14f, 0.6f));
+        StretchRect(dimmer.GetComponent<RectTransform>());
+        dimmer.GetComponent<Image>().raycastTarget = true;
+        dimmer.AddComponent<Button>().onClick.AddListener(HideGuidePopup);
+
+        GameObject card = CreateImage(helpPopupRoot.transform, "GuidePopup", Color.white);
+        Image surface = card.GetComponent<Image>();
+        surface.sprite = GetRoundedRectangleSprite();
+        surface.type = Image.Type.Sliced;
+        surface.raycastTarget = true;
+        RectTransform rect = card.GetComponent<RectTransform>();
+        rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.sizeDelta = new Vector2(940f, 660f);
+        helpTitle = CreateText(card.transform, "Title", "Hướng dẫn", 32f, FontStyles.Bold,
+            new Color(0.82f, 0.12f, 0.15f), TextAlignmentOptions.MidlineLeft);
+        SetTopLeftRect(helpTitle.rectTransform, new Vector2(800f, 90f), new Vector2(48f, 24f));
+        helpBody = CreateText(card.transform, "Instructions", "", 27f, FontStyles.Normal,
+            new Color(0.23f, 0.27f, 0.32f), TextAlignmentOptions.TopLeft);
+        helpBody.textWrappingMode = TextWrappingModes.Normal;
+        helpBody.lineSpacing = 8f;
+        SetTopLeftRect(helpBody.rectTransform, new Vector2(844f, 425f), new Vector2(48f, 130f));
+        GameObject close = CreateImage(card.transform, "CloseButton", new Color(0.82f, 0.12f, 0.15f));
+        SetTopLeftRect(close.GetComponent<RectTransform>(), new Vector2(260f, 64f), new Vector2(632f, 560f));
+        AddHelpButton(close, "Đóng", HideGuidePopup, Color.white);
+        GameObject tests = CreateImage(card.transform, "OpenTestsButton", new Color(0.82f, 0.12f, 0.15f));
+        SetTopLeftRect(tests.GetComponent<RectTransform>(), new Vector2(360f, 64f), new Vector2(48f, 560f));
+        AddHelpButton(tests, "Mở danh sách Test", () =>
+        {
+            PDTwin.Point.PointRuntimePanel panel = FindFirstObjectByType<PDTwin.Point.PointRuntimePanel>();
+            if (panel == null) return;
+            HideGuidePopup();
+            panel.OpenTestOverview();
+        }, Color.white);
+        helpPopupRoot.SetActive(false);
+    }
+
+    private static void AddHelpButton(GameObject target, string label, UnityEngine.Events.UnityAction action,
+        Color? labelColor = null)
+    {
+        Image image = target.GetComponent<Image>();
+        image.raycastTarget = true;
+        Button button = target.AddComponent<Button>();
+        button.targetGraphic = image;
+        button.onClick.AddListener(action);
+        TextMeshProUGUI text = CreateText(target.transform, "Label", label, 25f, FontStyles.Bold,
+            labelColor ?? new Color(0.82f, 0.12f, 0.15f), TextAlignmentOptions.Center);
+        StretchRect(text.rectTransform);
+    }
+
+    public void ShowGuidePopup()
+    {
+        int step = manager.VisibleStepIndex;
+        if (helpPopupRoot == null || step != HmiStepIndex) return;
+        helpTitle.text = "Vận hành";
+        helpBody.text = "Bạn đã hoàn thành phần nối dây. Tiếp theo:\n\n" +
+            "1. Bấm <b>Mở danh sách Test</b> bên dưới, hoặc ô điểm ở <b>góc trên bên phải</b>.\n\n" +
+            "2. Bấm <b>Test 1</b> để xem đề, rồi bấm <b>BẮT ĐẦU CHẤM TEST 1</b>.\n\n" +
+            "3. Điều khiển động cơ trong <b>GX Works2</b> theo đề. Theo dõi kết quả trên màn giám sát.\n\n" +
+            "4. Hoàn thành Test 1, chọn <b>SANG TEST 2</b>. Làm xong hai Test, chọn <b>XEM LẠI VÀ NỘP</b>.";
+        helpPopupRoot.SetActive(true);
+    }
+
+    public void HideGuidePopup()
+    {
+        if (helpPopupRoot != null) helpPopupRoot.SetActive(false);
     }
 
     private void CaptureCameraState()
@@ -157,6 +286,9 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
             cameraFraming = mainCamera.gameObject.AddComponent<ResponsiveCameraFraming>();
 
         originalCameraPosition = mainCamera.transform.position;
+        originalCameraRect = mainCamera.rect;
+        originalCameraBackground = mainCamera.backgroundColor;
+        originalCameraClearFlags = mainCamera.clearFlags;
         originalDesignAspect = cameraFraming.designAspect;
         originalDesignVerticalFov = cameraFraming.designVerticalFov;
         cameraStateCaptured = true;
@@ -169,19 +301,38 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
 
         if (practicalView)
         {
+            Canvas.ForceUpdateCanvases();
+            if (modelViewport != null)
+            {
+                Vector3[] corners = new Vector3[4];
+                modelViewport.GetWorldCorners(corners);
+                Vector2 bottomLeft = RectTransformUtility.WorldToScreenPoint(null, corners[0]);
+                Vector2 topRight = RectTransformUtility.WorldToScreenPoint(null, corners[2]);
+                mainCamera.rect = new Rect(bottomLeft.x / Screen.width, bottomLeft.y / Screen.height,
+                    (topRight.x - bottomLeft.x) / Screen.width, (topRight.y - bottomLeft.y) / Screen.height);
+            }
+            mainCamera.clearFlags = CameraClearFlags.SolidColor;
+            mainCamera.backgroundColor = Color.white;
             cameraFraming.designAspect = 16f / 9f;
             cameraFraming.designVerticalFov = 56f;
             cameraFraming.ApplyFraming();
 
             if (TryCalculateBoardBounds(out Bounds boardBounds))
+            {
                 FrameCameraOnBoard(boardBounds);
+                UpdateModelWhiteBackground(boardBounds);
+            }
             else
+            {
                 mainCamera.transform.position = originalCameraPosition + mainCamera.transform.forward * 0.52f;
+                if (modelWhiteBackground != null) modelWhiteBackground.SetActive(false);
+            }
 
             practicalCameraApplied = true;
         }
         else
         {
+            if (modelWhiteBackground != null) modelWhiteBackground.SetActive(false);
             RestoreCameraState();
         }
 
@@ -190,6 +341,11 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
 
     private bool TryCalculateBoardBounds(out Bounds bounds)
     {
+        if (wiringBoard != null && wiringBoard.boardRenderer != null)
+        {
+            bounds = wiringBoard.boardRenderer.bounds;
+            return true;
+        }
         bounds = default;
         bool found = false;
 
@@ -272,11 +428,34 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
         // The Board occupies the central workspace between the two side cards.
         // These fractions keep it clear of both cards while making it larger than
         // the previous fixed-offset WebGL framing.
-        float verticalDistance = halfHeight / Mathf.Max(0.01f, Mathf.Tan(verticalFov * 0.5f) * 0.66f);
-        float horizontalDistance = halfWidth / Mathf.Max(0.01f, Mathf.Tan(horizontalFov * 0.5f) * 0.44f);
+        float verticalDistance = halfHeight / Mathf.Max(0.01f, Mathf.Tan(verticalFov * 0.5f) * 0.90f);
+        float horizontalDistance = halfWidth / Mathf.Max(0.01f, Mathf.Tan(horizontalFov * 0.5f) * 0.92f);
         float distance = Mathf.Max(verticalDistance, horizontalDistance) + halfDepth;
 
         mainCamera.transform.position = boardBounds.center - forward * distance;
+    }
+
+    private void UpdateModelWhiteBackground(Bounds boardBounds)
+    {
+        if (modelWhiteBackground == null)
+        {
+            modelWhiteBackground = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            modelWhiteBackground.name = "Bai2ModelWhiteBackground";
+            Collider hitbox = modelWhiteBackground.GetComponent<Collider>();
+            if (hitbox != null) Destroy(hitbox);
+            Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (shader == null) shader = Shader.Find("Unlit/Color");
+            modelWhiteBackgroundMaterial = new Material(shader) { color = Color.white };
+            modelWhiteBackground.GetComponent<Renderer>().sharedMaterial = modelWhiteBackgroundMaterial;
+        }
+
+        Vector3 forward = mainCamera.transform.forward;
+        float depth = Vector3.Dot(boardBounds.center - mainCamera.transform.position, forward) + boardBounds.extents.magnitude + 1f;
+        float verticalSize = 2f * depth * Mathf.Tan(mainCamera.fieldOfView * 0.5f * Mathf.Deg2Rad);
+        modelWhiteBackground.transform.SetPositionAndRotation(mainCamera.transform.position + forward * depth,
+            Quaternion.LookRotation(-forward, mainCamera.transform.up));
+        modelWhiteBackground.transform.localScale = new Vector3(verticalSize * mainCamera.aspect * 1.1f, verticalSize * 1.1f, 1f);
+        modelWhiteBackground.SetActive(true);
     }
 
     private void RestoreCameraState()
@@ -285,10 +464,18 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
             return;
 
         mainCamera.transform.position = originalCameraPosition;
+        mainCamera.rect = originalCameraRect;
+        mainCamera.backgroundColor = originalCameraBackground;
+        mainCamera.clearFlags = originalCameraClearFlags;
         cameraFraming.designAspect = originalDesignAspect;
         cameraFraming.designVerticalFov = originalDesignVerticalFov;
         cameraFraming.ApplyFraming();
         practicalCameraApplied = false;
+    }
+
+    public void RestoreOperationCamera()
+    {
+        RestoreCameraState();
     }
 
     private void HideLegacyWorkspaceUi()
@@ -336,30 +523,37 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
             boardHeading.gameObject.SetActive(false);
 
         guideReturnRoot = GameObject.Find("GuideReturn_Canvas");
-        if (guideReturnRoot != null)
-            guideReturnRoot.SetActive(false);
     }
 
     private void CreateWorkspace()
     {
-        Color pageBackground = new Color(0.965f, 0.965f, 0.965f, 1f);
+        Color pageBackground = Color.white;
         Color cardBorder = new Color(0.84f, 0.85f, 0.87f, 1f);
         Color cardShadow = new Color(0.12f, 0.14f, 0.17f, 0.12f);
         Color textColor = new Color(0.25f, 0.28f, 0.33f, 1f);
         Color red = new Color(0.82f, 0.12f, 0.15f, 1f);
 
-        workspaceRoot = CreateOverlayCanvas("Bai2PracticalWorkspace_Canvas", 100, false);
+        workspaceRoot = CreateOverlayCanvas("Bai2PracticalWorkspace_Canvas", 100, true);
+
+        GameObject navigationBackdrop = CreateImage(workspaceRoot.transform, "NavigationBackdrop", pageBackground);
+        SetTopLeftRect(navigationBackdrop.GetComponent<RectTransform>(), new Vector2(1920f, 97f), new Vector2(0f, 148f));
 
         GameObject leftBackdrop = CreateImage(workspaceRoot.transform, "LeftBackdrop", pageBackground);
-        SetTopLeftRect(leftBackdrop.GetComponent<RectTransform>(), new Vector2(510f, 828f), new Vector2(0f, 120f));
+        SetTopLeftRect(leftBackdrop.GetComponent<RectTransform>(), new Vector2(525f, 901f), new Vector2(0f, 148f));
 
         GameObject rightBackdrop = CreateImage(workspaceRoot.transform, "RightBackdrop", pageBackground);
-        SetTopLeftRect(rightBackdrop.GetComponent<RectTransform>(), new Vector2(445f, 828f), new Vector2(1475f, 120f));
+        SetTopLeftRect(rightBackdrop.GetComponent<RectTransform>(), new Vector2(47f, 901f), new Vector2(1873f, 148f));
+
+        GameObject modelPanel = new GameObject("ModelPanel", typeof(RectTransform));
+        modelPanel.transform.SetParent(workspaceRoot.transform, false);
+        modelViewport = modelPanel.GetComponent<RectTransform>();
+        SetTopLeftRect(modelViewport, new Vector2(1348f, 804f), new Vector2(525f, 245f));
+        CreateModelFrame(modelPanel.transform, cardBorder, cardShadow);
 
         GameObject guideCard = CreateWorkspaceCard(
             workspaceRoot.transform,
             "GuideCard",
-            new Vector2(52f, 144f),
+            new Vector2(52f, 245f),
             new Vector2(442f, 544f),
             cardBorder,
             cardShadow);
@@ -403,37 +597,49 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
         wireGuideText.lineSpacing = 10f;
         SetTopLeftRect(wireGuideText.rectTransform, new Vector2(342f, 250f), new Vector2(58f, 283f));
 
-        GameObject wireCard = CreateWorkspaceCard(
-            workspaceRoot.transform,
-            "WireCard",
-            new Vector2(1492f, 144f),
-            new Vector2(381f, 804f),
-            cardBorder,
-            cardShadow);
-
-        CreateWireIcon(wireCard.transform, new Vector2(44f, 47f), red);
-        TextMeshProUGUI wireHeading = CreateText(
-            wireCard.transform,
-            "Heading",
-            "B\u1ED9 d\u00E2y",
-            36f,
-            FontStyles.Bold,
-            new Color(0.16f, 0.17f, 0.19f, 1f),
-            TextAlignmentOptions.MidlineLeft);
-        SetTopLeftRect(wireHeading.rectTransform, new Vector2(230f, 58f), new Vector2(86f, 31f));
-
-        GameObject wireDivider = CreateImage(wireCard.transform, "Divider", new Color(0.87f, 0.88f, 0.9f, 1f));
-        SetTopLeftRect(wireDivider.GetComponent<RectTransform>(), new Vector2(292f, 2f), new Vector2(44f, 94f));
-
-        for (int i = 0; i < WireRowCount; i++)
-            CreateWireRow(wireCard.transform, i);
+        previousStepButton = CreateActionButton("PreviousStepButton", "\u2190  B\u01B0\u1EDBc tr\u01B0\u1EDBc",
+            new Vector2(52f, 814f), () => manager.TryShowStepView(Mathf.Max(0, manager.VisibleStepIndex - 1)));
+        CreateActionButton("OperationButton", "V\u1EADn h\u00E0nh  \u2192", new Vector2(282f, 814f),
+            () => manager.TryShowStepView(HmiStepIndex));
 
         workspaceMaskRoot = CreateOverlayCanvas("Bai2PracticalWorkspaceMasks_Canvas", 4800, false);
         GameObject topMask = CreateImage(workspaceMaskRoot.transform, "TopMask", pageBackground);
-        SetTopLeftRect(topMask.GetComponent<RectTransform>(), new Vector2(1920f, 144f), Vector2.zero);
+        SetTopLeftRect(topMask.GetComponent<RectTransform>(), new Vector2(1920f, 148f), Vector2.zero);
 
         GameObject bottomMask = CreateImage(workspaceMaskRoot.transform, "BottomMask", pageBackground);
-        SetTopLeftRect(bottomMask.GetComponent<RectTransform>(), new Vector2(1920f, 132f), new Vector2(0f, 948f));
+        SetTopLeftRect(bottomMask.GetComponent<RectTransform>(), new Vector2(1920f, 30f), new Vector2(0f, 1050f));
+    }
+
+    private Button CreateActionButton(string name, string label, Vector2 position, UnityEngine.Events.UnityAction action)
+    {
+        GameObject card = CreateWorkspaceCard(workspaceRoot.transform, name, position, new Vector2(210f, 70f),
+            new Color(0.84f, 0.85f, 0.87f), new Color(0.12f, 0.14f, 0.17f, 0.12f));
+        Image image = card.GetComponent<Image>();
+        image.raycastTarget = true;
+        Button button = card.AddComponent<Button>();
+        button.targetGraphic = image;
+        button.onClick.AddListener(action);
+        ColorBlock colors = button.colors;
+        colors.highlightedColor = new Color(0.95f, 0.97f, 1f);
+        colors.pressedColor = new Color(0.88f, 0.92f, 0.98f);
+        button.colors = colors;
+        TextMeshProUGUI text = CreateText(card.transform, "Label", label, 24f, FontStyles.Normal,
+            new Color(0.25f, 0.28f, 0.33f), TextAlignmentOptions.Center);
+        StretchRect(text.rectTransform);
+        return button;
+    }
+
+    private static void CreateModelFrame(Transform parent, Color border, Color shadow)
+    {
+        Vector2[] positions = { Vector2.zero, new Vector2(0f, 802f), Vector2.zero, new Vector2(1346f, 0f) };
+        Vector2[] sizes = { new Vector2(1348f, 2f), new Vector2(1348f, 2f), new Vector2(2f, 804f), new Vector2(2f, 804f) };
+        for (int i = 0; i < positions.Length; i++)
+        {
+            GameObject edge = CreateImage(parent, "FrameEdge_" + i, border);
+            SetTopLeftRect(edge.GetComponent<RectTransform>(), sizes[i], positions[i]);
+        }
+        GameObject shade = CreateImage(parent, "FrameShadow", shadow);
+        SetTopLeftRect(shade.GetComponent<RectTransform>(), new Vector2(1348f, 4f), new Vector2(4f, 804f));
     }
 
     private void CreateWireRow(Transform parent, int index)
@@ -495,6 +701,10 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
 
     private void UpdateWorkspaceContent(int stepIndex)
     {
+        instructionText.gameObject.SetActive(!manager.IsCompletedReviewMode);
+        SetTopLeftRect(wireGuideText.rectTransform,
+            new Vector2(342f, manager.IsCompletedReviewMode ? 390f : 250f),
+            new Vector2(58f, manager.IsCompletedReviewMode ? 122f : 283f));
         instructionText.text = manager.IsCompletedReviewMode
             ? "Quan s\u00E1t c\u00E1c d\u00E2y \u0111\u00E3 n\u1ED1i\ntr\u00EAn b\u1EA3ng \u0111i\u1EC1u khi\u1EC3n:\n"
             : "K\u00E9o th\u1EA3 c\u00E1c \u0111\u1EA7u d\u00E2y n\u1ED1i\nv\u00E0o c\u00E1c gi\u1EAFc c\u1EAFm tr\u00EAn\nb\u1EA3ng \u0111i\u1EC1u khi\u1EC3n:";
@@ -553,7 +763,7 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
             return;
 
         navigationPanel = panelTransform as RectTransform;
-        SetTopLeftRect(navigationPanel, new Vector2(1823f, 69f), new Vector2(50f, 52f));
+        SetTopLeftRect(navigationPanel, new Vector2(1823f, 69f), new Vector2(50f, 154f));
 
         Transform connector = panelTransform.Find("Bai1StyleConnector");
         if (connector == null)
@@ -634,6 +844,7 @@ public sealed class Bai2PracticalWorkspaceSkin : MonoBehaviour
             Button button = navigationButtons[i];
             if (button != null)
             {
+                button.transition = Selectable.Transition.ColorTint;
                 button.interactable = unlocked;
                 ColorBlock colors = button.colors;
                 colors.normalColor = Color.white;

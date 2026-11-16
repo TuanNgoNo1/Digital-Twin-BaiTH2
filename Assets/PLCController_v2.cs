@@ -1292,6 +1292,15 @@ public class PLCController_v2 : MonoBehaviour
         return feedbackRpm;
     }
 
+    public RectTransform OperationHmiPanel => canvasHmiPanelRect;
+    public RectTransform OperationMotorPanel => controlCameraOverlayRoot != null
+        ? controlCameraOverlayRoot.transform.Find("MotorPipPanel") as RectTransform : null;
+
+    public bool TryGetOperationModelBounds(out Bounds bounds)
+    {
+        return TryCalculateWiringOverviewBounds(out bounds);
+    }
+
     private void ActivateControlCameraLayout()
     {
         if (!enableControlCameraLayout)
@@ -2232,13 +2241,18 @@ public class PLCController_v2 : MonoBehaviour
         Color orangeBtn = new Color(1f, 0.47f, 0.05f, 1f);
 
         GameObject panel = hmiScreenObject != null ? hmiScreenObject : new GameObject("HMI_Screen");
+        // The authored scene contains a previous HMI layout. Replace its children
+        // with the runtime layout so old banners and titles cannot overlap it.
+        if (usesSceneHmi)
+            foreach (Transform previous in panel.transform)
+                previous.gameObject.SetActive(false);
         if (panel.transform.parent != canvasHmiRoot.transform)
             panel.transform.SetParent(canvasHmiRoot.transform, false);
 
         canvasHmiPanelRect = panel.GetComponent<RectTransform>();
         if (canvasHmiPanelRect == null)
             canvasHmiPanelRect = panel.AddComponent<RectTransform>();
-        Vector2 modernHmiSize = new Vector2(620f, 480f);
+        Vector2 modernHmiSize = IsTelemetryOnly ? new Vector2(620f, 560f) : new Vector2(620f, 480f);
         RectTransform rootRect = canvasHmiRoot.GetComponent<RectTransform>();
         bool screenSpaceHmi = canvas.renderMode != RenderMode.WorldSpace;
         if (rootRect != null)
@@ -2262,9 +2276,9 @@ public class PLCController_v2 : MonoBehaviour
             canvasHmiPanelRect.anchorMin = new Vector2(1f, 1f);
             canvasHmiPanelRect.anchorMax = new Vector2(1f, 1f);
             canvasHmiPanelRect.pivot = new Vector2(1f, 1f);
-            // Leave a safe band below Bai 2's top navigation bar. The previous
-            // 52 px offset overlapped the navigation after WebGL canvas scaling.
-            canvasHmiPanelRect.anchoredPosition = new Vector2(-32f, -104f);
+            // Bai 2 navigation uses a 1920x1080 canvas; the HMI uses 1280x720.
+            canvasHmiPanelRect.anchoredPosition = IsTelemetryOnly
+                ? new Vector2(-32f, -164f) : new Vector2(-32f, -104f);
         }
         else
         {
@@ -2275,7 +2289,7 @@ public class PLCController_v2 : MonoBehaviour
         }
         canvasHmiPanelRect.sizeDelta = modernHmiSize;
         if (screenSpaceHmi)
-            panel.transform.localScale = Vector3.one * 0.85f;
+            panel.transform.localScale = Vector3.one * (IsTelemetryOnly ? 0.65f : 0.85f);
         else if (!usesSceneHmi)
             panel.transform.localScale = Vector3.one * canvasHmiScale;
         else
@@ -2285,13 +2299,32 @@ public class PLCController_v2 : MonoBehaviour
         if (panelImage == null)
             panelImage = panel.AddComponent<Image>();
         panelImage.color = screenBg;
+        if (IsTelemetryOnly)
+        {
+            panelImage.color = Color.white;
+            panelImage.sprite = Resources.Load<Sprite>("UI/RoundedRect");
+            panelImage.type = Image.Type.Sliced;
+        }
         AddShadow(panel, new Color(0.02f, 0.16f, 0.16f, 0.18f), new Vector2(0f, -6f));
 
-        CreateInstitutionHeader(panel.transform, modernHmiSize, redBtn);
+        if (!IsTelemetryOnly) CreateInstitutionHeader(panel.transform, modernHmiSize, redBtn);
 
         hmiTitleText = CreateText(panel.transform, "HmiTitle", "GIAO DIỆN ĐIỀU KHIỂN", new Vector2(0f, -66f), new Vector2(620f, 32f), 22, true);
         hmiTitleText.alignment = TextAlignmentOptions.Center;
         hmiTitleText.color = titleColor;
+        if (IsTelemetryOnly)
+        {
+            hmiTitleText.rectTransform.anchoredPosition = new Vector2(80f, -22f);
+            hmiTitleText.rectTransform.sizeDelta = new Vector2(520f, 54f);
+            hmiTitleText.alignment = TextAlignmentOptions.MidlineLeft;
+            hmiTitleText.fontSize = 36f;
+            hmiTitleText.color = Color.black;
+            Transform icon = MakeSubPanel(panel.transform, "TelemetryHeadingIcon", new Vector2(24f, -22f),
+                new Vector2(42f, 50f), new Color32(255, 241, 241, 255));
+            for (int line = 0; line < 3; line++)
+                MakeSubPanel(icon, "DocumentLine" + line, new Vector2(11f, -13f - line * 10f),
+                    new Vector2(20f, 2f), new Color32(202, 20, 23, 255));
+        }
 
         Transform gp = MakeSubPanel(panel.transform, "SetupCard", new Vector2(14f, -104f), new Vector2(374f, 342f), card);
         Transform rp = MakeSubPanel(panel.transform, "ControlCard", new Vector2(402f, -104f), new Vector2(204f, 342f), card);
@@ -2356,11 +2389,14 @@ public class PLCController_v2 : MonoBehaviour
 
     private void CreateTelemetryOnlyPanel(Transform parent, Color cardColor, Color statusColor, Color titleColor)
     {
+        cardColor = Color.white;
+        statusColor = new Color32(248, 249, 251, 255);
+        titleColor = Color.black;
         Transform telemetry = MakeSubPanel(
             parent,
             "TelemetryCard",
             new Vector2(14f, -104f),
-            new Vector2(592f, 342f),
+            new Vector2(592f, 422f),
             cardColor);
         hmiTelemetryCard = telemetry.gameObject;
 
@@ -2376,14 +2412,14 @@ public class PLCController_v2 : MonoBehaviour
             "Kết nối RS485: Đang chờ",
             new Vector2(14f, -7f),
             new Vector2(532f, 30f),
-            17,
+            20,
             true);
 
         Transform motorCard = MakeSubPanel(
             telemetry,
             "MotorTelemetry",
             new Vector2(16f, -70f),
-            new Vector2(270f, 190f),
+            new Vector2(270f, 255f),
             statusColor);
         TextMeshProUGUI motorTitle = CreateText(
             motorCard,
@@ -2391,18 +2427,18 @@ public class PLCController_v2 : MonoBehaviour
             "TRẠNG THÁI ĐỘNG CƠ",
             new Vector2(14f, -10f),
             new Vector2(242f, 24f),
-            16,
+            18,
             true);
         motorTitle.color = titleColor;
-        hmiTelemetryMotorText = CreateText(motorCard, "MotorState", "Motor: --", new Vector2(14f, -48f), new Vector2(242f, 26f), 17, true);
-        hmiTelemetrySpeedText = CreateText(motorCard, "ActualSpeed", "RPM thực tế: 0", new Vector2(14f, -88f), new Vector2(242f, 26f), 16, false);
-        hmiTelemetryDirectionText = CreateText(motorCard, "Direction", "Chiều quay: --", new Vector2(14f, -128f), new Vector2(242f, 26f), 16, false);
+        hmiTelemetryMotorText = CreateText(motorCard, "MotorState", "Motor: --", new Vector2(14f, -57f), new Vector2(242f, 36f), 22, true);
+        hmiTelemetrySpeedText = CreateText(motorCard, "ActualSpeed", "RPM thực tế: 0", new Vector2(14f, -112f), new Vector2(242f, 36f), 21, false);
+        hmiTelemetryDirectionText = CreateText(motorCard, "Direction", "Chiều quay: --", new Vector2(14f, -167f), new Vector2(242f, 36f), 21, false);
 
         Transform encoderCard = MakeSubPanel(
             telemetry,
             "EncoderTelemetry",
             new Vector2(306f, -70f),
-            new Vector2(270f, 190f),
+            new Vector2(270f, 255f),
             statusColor);
         TextMeshProUGUI encoderTitle = CreateText(
             encoderCard,
@@ -2410,34 +2446,34 @@ public class PLCController_v2 : MonoBehaviour
             "PHẢN HỒI ENCODER",
             new Vector2(14f, -10f),
             new Vector2(242f, 24f),
-            16,
+            18,
             true);
         encoderTitle.color = titleColor;
-        hmiTelemetryEncoderText = CreateText(encoderCard, "EncoderCount", "Encoder count: 0", new Vector2(14f, -48f), new Vector2(242f, 26f), 16, false);
-        hmiTelemetryRotationsText = CreateText(encoderCard, "Rotations", "Số vòng quay: 0", new Vector2(14f, -88f), new Vector2(242f, 26f), 16, false);
-        hmiTelemetryAngleText = CreateText(encoderCard, "RotorAngle", "Góc rotor: 0°", new Vector2(14f, -128f), new Vector2(242f, 26f), 16, false);
+        hmiTelemetryEncoderText = CreateText(encoderCard, "EncoderCount", "Encoder count: 0", new Vector2(14f, -57f), new Vector2(242f, 36f), 21, false);
+        hmiTelemetryRotationsText = CreateText(encoderCard, "Rotations", "Số vòng quay: 0", new Vector2(14f, -112f), new Vector2(242f, 36f), 21, false);
+        hmiTelemetryAngleText = CreateText(encoderCard, "RotorAngle", "Góc rotor: 0°", new Vector2(14f, -167f), new Vector2(242f, 36f), 21, false);
 
         Transform healthBand = MakeSubPanel(
             telemetry,
             "TelemetryHealth",
-            new Vector2(16f, -274f),
-            new Vector2(560f, 54f),
+            new Vector2(16f, -340f),
+            new Vector2(560f, 64f),
             statusColor);
         hmiTelemetryLastUpdateText = CreateText(
             healthBand,
             "LastUpdate",
             "Telemetry gần nhất: --",
             new Vector2(14f, -5f),
-            new Vector2(532f, 22f),
-            14,
+            new Vector2(532f, 26f),
+            17,
             false);
         hmiTelemetryHealthText = CreateText(
             healthBand,
             "DataHealth",
             "Dữ liệu: Đang chờ",
-            new Vector2(14f, -27f),
-            new Vector2(532f, 22f),
-            14,
+            new Vector2(14f, -33f),
+            new Vector2(532f, 26f),
+            17,
             true);
     }
 
@@ -2454,7 +2490,7 @@ public class PLCController_v2 : MonoBehaviour
 
         if (hmiTitleText != null)
             hmiTitleText.text = telemetryOnly
-                ? "GIÁM SÁT ĐỘNG CƠ QUA RS485"
+                ? "Giám sát động cơ"
                 : "GIAO DIỆN ĐIỀU KHIỂN";
     }
 

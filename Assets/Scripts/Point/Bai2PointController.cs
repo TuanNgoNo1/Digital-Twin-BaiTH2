@@ -524,9 +524,7 @@ namespace PDTwin.Point
             if (collector.IsCollecting || index < 0 || index >= tests.Length) return;
             bool submitted = PDTwinBridge.IsSubmitted || submittedLocally;
             bool readOnly = submitted || sessionEndedLocked;
-            if (!readOnly && index >= currentTest) return;
-            if (readOnly && tests[index].bestEvaluation == null && !tests[index].Resolved) return;
-            reviewedTest = index;
+            reviewedTest = !readOnly && index == currentTest ? -1 : index;
             RefreshPanel();
         }
 
@@ -612,9 +610,7 @@ namespace PDTwin.Point
                 title = index == 0 ? "Test 1 • Chế độ số vòng" : "Test 2 • Chế độ góc",
                 evidence = BuildOverviewEvidence(index, record), state = state, earned = record.bestScore,
                 maximum = TestMaximumScore, health = health, selected = index == selectedTest,
-                interactive = !collector.IsCollecting && ((submitted || sessionEndedLocked)
-                    ? record.bestEvaluation != null || record.Resolved
-                    : index < currentTest),
+                interactive = !collector.IsCollecting || index == currentTest,
                 testIndex = index
             };
         }
@@ -636,11 +632,19 @@ namespace PDTwin.Point
                 reviewedTest >= 0 ? "XEM LẠI" : StateLabel(record.state, index > currentTest),
                 reviewedTest >= 0 ? RuntimeHealth.Unknown : StateHealth(record.state));
             if (index == 0)
+            {
+                panel.SetTestInstructions("1. Bấm BẮT ĐẦU CHẤM; chạy Thuận 10 RPM đủ 1 vòng (+5.000 xung).\n" +
+                    "2. STOP để hệ thống ghi nhận tốc độ, chiều quay và vị trí dừng.");
                 panel.SetTargetChips(new[] { "CHIỀU", "TỐC ĐỘ", "QUÃNG ĐƯỜNG", "ΔENCODER" },
                     new[] { "Thuận", "10 RPM", "1 vòng", "+5.000" });
+            }
             else
+            {
+                panel.SetTestInstructions("1. Bấm BẮT ĐẦU CHẤM; chạy Thuận +180° ở 5 RPM rồi STOP.\n" +
+                    "2. Chạy Ngược −180° ở 5 RPM, STOP tại vị trí đầu.");
                 panel.SetTargetChips(new[] { "PHA A", "PHA B", "TỐC ĐỘ", "KẾT QUẢ" },
                     new[] { "+180° Thuận", "−180° Ngược", "5 RPM", "Về vị trí đầu" });
+            }
         }
 
         private void ConfigureStatus(int index, TestRecord record)
@@ -743,7 +747,7 @@ namespace PDTwin.Point
         {
             if (sessionEndedLocked && !submitted) { panel.SetActions("PHIÊN ĐÃ KẾT THÚC", false, false); return; }
             if (submitted) { panel.SetActions("ĐÃ KHÓA BÀI", false, false); return; }
-            if (reviewedTest >= 0) { panel.SetActions("QUAY LẠI TEST 2", true, tests[1].Resolved); return; }
+            if (reviewedTest >= 0) { panel.SetActions($"QUAY LẠI TEST {currentTest + 1}", true, tests[1].Resolved); return; }
             bool submitReady = currentTest == 1 && tests[1].Resolved && !collector.IsCollecting;
             if (collector.IsCollecting) { panel.SetActions("ĐANG CHẤM...", false, false); return; }
             if (record.state == TestState.Passed || record.state == TestState.Exhausted)

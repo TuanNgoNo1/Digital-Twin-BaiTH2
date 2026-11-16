@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -30,6 +31,16 @@ public class WireBody : MonoBehaviour
     private Vector3 lastP0;
     private Vector3 lastP3;
     private MeshRenderer meshRend;
+    private ProceduralConnectedWire connectedVisual;
+    private readonly Dictionary<Renderer, bool> originalPlugVisibility = new Dictionary<Renderer, bool>();
+    private Vector3 visualStart;
+    private Vector3 visualEnd;
+    private Vector3 visualCameraPosition;
+    private Quaternion visualCameraRotation;
+    private Vector2Int visualResolution;
+    private Color presentationColor;
+    private bool visualBuilt;
+    private Material ownedWireMaterial;
     private const int WireOverlayQueue = 5000;
     private static readonly int ColorProperty = Shader.PropertyToID("_Color");
 
@@ -59,6 +70,7 @@ public class WireBody : MonoBehaviour
         lr.enabled = plugA != null && plugB != null;
 
         SetWireMaterial();
+        presentationColor = GetWireColor();
         ForceRefreshLine();
     }
 
@@ -93,9 +105,23 @@ public class WireBody : MonoBehaviour
         if (plugA == null || plugB == null)
         {
             lr.enabled = false;
+            if (connectedVisual != null)
+                connectedVisual.gameObject.SetActive(false);
+            SetLegacyPlugsVisible(true);
             return;
         }
 
+        if (plugA.isSnapped && plugB.isSnapped)
+        {
+            UpdateConnectedVisual();
+            lr.enabled = false;
+            SetLegacyPlugsVisible(false);
+            return;
+        }
+
+        if (connectedVisual != null)
+            connectedVisual.gameObject.SetActive(false);
+        SetLegacyPlugsVisible(true);
         if (!lr.enabled)
             lr.enabled = true;
 
@@ -104,6 +130,77 @@ public class WireBody : MonoBehaviour
         lastP0 = p0;
         lastP3 = p3;
         UpdateLinePositions();
+    }
+
+    private void UpdateConnectedVisual()
+    {
+        if (connectedVisual == null)
+        {
+            GameObject visual = new GameObject(name + "_ConnectedWire");
+            visual.transform.SetParent(transform, false);
+            connectedVisual = visual.AddComponent<ProceduralConnectedWire>();
+            connectedVisual.Configure(this, GetWireColor());
+        }
+
+        Camera camera = Camera.main;
+        Vector3 cameraPosition = camera != null ? camera.transform.position : Vector3.zero;
+        Quaternion cameraRotation = camera != null ? camera.transform.rotation : Quaternion.identity;
+        Vector2Int resolution = new Vector2Int(Screen.width, Screen.height);
+        Vector3 start = plugA.transform.position;
+        Vector3 end = plugB.transform.position;
+        bool needsRebuild = !visualBuilt || !connectedVisual.gameObject.activeSelf ||
+            (visualStart - start).sqrMagnitude > 0.00000001f ||
+            (visualEnd - end).sqrMagnitude > 0.00000001f ||
+            (visualCameraPosition - cameraPosition).sqrMagnitude > 0.00000001f ||
+            Quaternion.Angle(visualCameraRotation, cameraRotation) > 0.01f || visualResolution != resolution;
+
+        if (needsRebuild)
+        {
+            visualBuilt = connectedVisual.Rebuild();
+            visualStart = start;
+            visualEnd = end;
+            visualCameraPosition = cameraPosition;
+            visualCameraRotation = cameraRotation;
+            visualResolution = resolution;
+            connectedVisual.SetPresentationColor(presentationColor);
+        }
+        connectedVisual.gameObject.SetActive(visualBuilt);
+    }
+
+    public void SetConnectedPresentationColor(Color color)
+    {
+        presentationColor = color;
+        if (connectedVisual != null)
+            connectedVisual.SetPresentationColor(color);
+    }
+
+    private void SetLegacyPlugsVisible(bool visible)
+    {
+        if (!visible && originalPlugVisibility.Count == 0)
+        {
+            RememberPlugRenderers(plugA);
+            RememberPlugRenderers(plugB);
+        }
+        foreach (KeyValuePair<Renderer, bool> entry in originalPlugVisibility)
+        {
+            if (entry.Key != null)
+                entry.Key.enabled = visible && entry.Value;
+        }
+    }
+
+    private void RememberPlugRenderers(WirePlug plug)
+    {
+        if (plug == null)
+            return;
+        foreach (Renderer renderer in plug.GetComponentsInChildren<Renderer>(true))
+            originalPlugVisibility[renderer] = renderer.enabled;
+    }
+
+    private void OnDestroy()
+    {
+        SetLegacyPlugsVisible(true);
+        if (ownedWireMaterial != null)
+            Destroy(ownedWireMaterial);
     }
 
     void SetWireMaterial()
@@ -115,6 +212,7 @@ public class WireBody : MonoBehaviour
             : CreateFallbackWireMaterial();
 
         mat.renderQueue = WireOverlayQueue;
+        ownedWireMaterial = mat;
         if (mat.HasProperty(ColorProperty))
         {
             mat.SetColor(ColorProperty, wireColorValue);
@@ -130,11 +228,11 @@ public class WireBody : MonoBehaviour
     {
         switch (wireColor)
         {
-            case WireColor.Yellow: return new Color(1f, 0.85f, 0f);
-            case WireColor.Red: return Color.red;
-            case WireColor.Black: return new Color(0.1f, 0.1f, 0.1f);
-            case WireColor.Green: return new Color(0f, 0.8f, 0.2f);
-            case WireColor.Blue: return new Color(0.1f, 0.4f, 1f);
+            case WireColor.Yellow: return new Color(1f, 0.72f, 0.02f);
+            case WireColor.Red: return new Color(0.82f, 0.025f, 0.035f);
+            case WireColor.Black: return new Color(0.035f, 0.04f, 0.05f);
+            case WireColor.Green: return new Color(0.02f, 0.55f, 0.14f);
+            case WireColor.Blue: return new Color(0.05f, 0.25f, 0.85f);
             default: return Color.white;
         }
     }

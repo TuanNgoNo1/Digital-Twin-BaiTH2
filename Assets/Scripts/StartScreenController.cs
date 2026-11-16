@@ -5,7 +5,7 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
-public class StartScreenController : MonoBehaviour
+public partial class StartScreenController : MonoBehaviour
 {
     public static bool OpenGuidePageOnStart;
     public static bool ContinuePracticeFromGuide;
@@ -21,12 +21,12 @@ public class StartScreenController : MonoBehaviour
     [SerializeField] private RectTransform background;
 
     // PTIT visual identity: red accents on clean white surfaces.
-    private static readonly Color Navy = new Color32(139, 0, 0, 255);
-    private static readonly Color Blue = new Color32(215, 25, 32, 255);
+    private static readonly Color Navy = new Color32(194, 29, 31, 255);
+    private static readonly Color Blue = new Color32(202, 20, 23, 255);
     private static readonly Color LightBlue = Color.white;
     private static readonly Color Ink = Color.black;
     private static readonly Color Muted = Color.black;
-    private static readonly Color Surface = Color.white;
+    private static readonly Color Surface = new Color32(249, 250, 251, 255);
 
     private int currentPageIndex;
     private Button previousButton;
@@ -51,6 +51,8 @@ public class StartScreenController : MonoBehaviour
         public bool WideImage;
         public bool ShortcutGrid;
         public bool GuacamoleLogin;
+        public bool TelemetryRegisters;
+        public bool TelemetryFormulas;
     }
 
     private void Awake()
@@ -96,7 +98,7 @@ public class StartScreenController : MonoBehaviour
         {
             backgroundImage.sprite = null;
             backgroundImage.type = Image.Type.Simple;
-            backgroundImage.color = Color.white;
+            backgroundImage.color = Surface;
         }
         sceneCamera = Camera.main;
         if (sceneCamera != null)
@@ -202,9 +204,9 @@ public class StartScreenController : MonoBehaviour
             Section = "06", Eyebrow = "XÁC ĐỊNH CỔNG COM", Title = "Thiết lập kết nối PLC",
             LeftTitle = "6.1. Xác định cổng COM",
             LeftBody = "<b>1.</b> Kết nối cáp lập trình với máy tính.\n\n<b>2.</b> Mở <b>Device Manager</b> của Windows.\n\n" +
-                       "<b>3.</b> Mở nhóm <b>Ports (COM & LPT)</b>.\n\n<b>4.</b> Ghi lại cổng COM của cáp lập trình, ví dụ <b>COM4</b> hoặc <b>COM6</b>.",
+                       "<b>3.</b> Mở nhóm <b>Ports (COM & LPT)</b>.\n\n<b>4.</b> Ghi lại cổng COM của cáp lập trình; trạm thực hành này dùng <b>COM3</b>.",
             RightTitle = "Thông tin cần ghi nhớ",
-            RightBody = "<size=170%><color=#DA1F2D><b>COM4</b></color></size>\n\nCổng COM trên mỗi máy có thể khác nhau. Luôn kiểm tra lại trong Device Manager trước khi cấu hình GX Works2."
+            RightBody = "<size=170%><color=#DA1F2D><b>COM3</b></color></size>\n\nChọn COM3 trong GX Works2. Kiểm tra lại cổng thực tế trong Device Manager nếu dùng máy khác."
         };
         yield return new PageSpec
         {
@@ -245,13 +247,91 @@ public class StartScreenController : MonoBehaviour
                         "• Đưa bit về OFF sau khi thử nếu chương trình không tự reset.\n\n• Không sửa tham số khi đang phát xung.\n\n" +
                         "• Kết thúc giám sát trước khi thay đổi cấu trúc chương trình."
         };
+        yield return new PageSpec
+        {
+            Section = "09", Eyebrow = "THIẾT BỊ ĐIỀU KHIỂN", Title = "Thiết bị và thanh ghi điều khiển",
+            TelemetryRegisters = true,
+            Note = "Các bit lệnh dùng xung ON → OFF; riêng M3 giữ ON. Không tự ý Force các bit hệ thống nếu chương trình không yêu cầu."
+        };
+        yield return new PageSpec
+        {
+            Section = "10", Eyebrow = "CÔNG THỨC QUY ĐỔI", Title = "Tính xung và dữ liệu telemetry",
+            TelemetryFormulas = true,
+            Note = "Quy ước của driver trong Bài 2: PPR = 5000 xung/vòng."
+        };
+    }
+
+    private static void CreateTelemetryRegisters(RectTransform page)
+    {
+        CreateTextCard(page, "CommandBits", new Vector2(0.06f, 0.21f), new Vector2(0.49f, 0.78f),
+            "Bit lệnh M",
+            "<b>M1</b>  Phát lệnh chạy motor — xung ON rồi OFF\n" +
+            "<b>M2</b>  Chọn chiều thuận — xung ON rồi OFF\n" +
+            "<b>M8</b>  Chọn chiều ngược — xung ON rồi OFF\n" +
+            "<b>M4</b>  Chế độ theo số vòng — xung ON rồi OFF\n" +
+            "<b>M5</b>  Chế độ theo góc — xung ON rồi OFF\n" +
+            "<b>M3</b>  Cho phép đếm encoder — giữ ON\n" +
+            "<b>M12</b>  Reset encoder — xung ON rồi OFF\n" +
+            "<b>M13</b>  Reset lệnh và dữ liệu cũ trước khi cài đặt\n" +
+            "<b>M17</b>  Dừng khẩn cấp — xung ON rồi OFF",
+            false, 25f);
+        CreateTextCard(page, "DataRegisters", new Vector2(0.51f, 0.21f), new Vector2(0.94f, 0.78f),
+            "Thanh ghi D và ngõ ra Y",
+            "<b>D146</b>  Tốc độ đặt (RPM)\n" +
+            "<b>D112</b>  Số vòng đặt — dùng với M4\n" +
+            "<b>D114</b>  Góc đặt (độ) — dùng với M5\n" +
+            "<b>D100–D101</b>  Tần số phát xung (Hz) — chỉ kiểm tra\n" +
+            "<b>D110–D111</b>  Tổng số xung cần phát — chỉ kiểm tra\n" +
+            "<b>Y000</b>  Ngõ phát xung — hoạt động khi motor quay\n" +
+            "<b>Y001</b>  Ngõ chọn chiều — 1 thuận, 0 ngược\n\n" +
+            "<b>Bit hệ thống cần kiểm tra</b>\nM8000 · M8013 · M8122 · M8161 · M8029",
+            false, 25f);
+    }
+
+    private static void CreateTelemetryFormulas(RectTransform page)
+    {
+        CreateTextCard(page, "SpeedFormula", new Vector2(0.06f, 0.51f), new Vector2(0.49f, 0.78f),
+            "Tốc độ → tần số xung",
+            "<size=135%><b>f = RPM × 5000 / 60</b></size>\n\n" +
+            "f là tần số xung (Hz); RPM lấy từ D146.\n\n" +
+            "<b>5 RPM</b> ≈ 417 Hz   ·   <b>10 RPM</b> ≈ 833 Hz\n" +
+            "<b>20 RPM</b> ≈ 1667 Hz",
+            false, 25f);
+        CreateTextCard(page, "RotationFormula", new Vector2(0.51f, 0.51f), new Vector2(0.94f, 0.78f),
+            "Số vòng → số xung",
+            "<size=135%><b>N = R × 5000</b></size>\n\n" +
+            "R là số vòng trong D112.\n\n" +
+            "<b>Ví dụ:</b> 1 vòng = 5000 xung",
+            false, 25f);
+        CreateTextCard(page, "AngleFormula", new Vector2(0.06f, 0.21f), new Vector2(0.49f, 0.49f),
+            "Góc → số xung",
+            "<size=135%><b>N = góc × 5000 / 360</b></size>\n\n" +
+            "Góc được nhập trong D114.\n\n" +
+            "<b>180°</b> = 2500 xung   ·   <b>90°</b> = 1250 xung",
+            false, 25f);
+        CreateTextCard(page, "TelemetryFormula", new Vector2(0.51f, 0.21f), new Vector2(0.94f, 0.49f),
+            "Quy đổi telemetry",
+            "<b>RPM = f × 60 / 5000</b>\n\n" +
+            "<b>Số vòng = encoderCount / 5000</b>\n\n" +
+            "<b>Góc rotor = (encoderCount mod 5000) × 360 / 5000</b>",
+            false, 25f);
     }
 
     private GameObject BuildPage(RectTransform parent, PageSpec spec)
     {
         RectTransform page = CreateRect(parent, "GXW_Page_" + (parent.childCount + 1).ToString("00"), Vector2.zero, Vector2.one);
-        page.gameObject.AddComponent<Image>().color = Surface;
+        CreateGuideBackground(page);
         CreateHeader(page, spec);
+
+        if (spec.TelemetryRegisters || spec.TelemetryFormulas)
+        {
+            if (spec.TelemetryRegisters)
+                CreateTelemetryRegisters(page);
+            else
+                CreateTelemetryFormulas(page);
+            CreateNote(page, spec.Note);
+            return page.gameObject;
+        }
 
         if (spec.GuacamoleLogin)
         {
@@ -279,19 +359,22 @@ public class StartScreenController : MonoBehaviour
 
     private static void CreateHeader(RectTransform page, PageSpec spec)
     {
-        RectTransform header = CreateRect(page, "Header", new Vector2(0.055f, 0.81f), new Vector2(0.945f, 0.96f));
-        CreateText(header, "Section", spec.Section, 28f, FontStyles.Bold, Blue, new Vector2(0f, 0.65f), new Vector2(0.07f, 1f), TextAlignmentOptions.Left);
-        CreateText(header, "Eyebrow", spec.Eyebrow, 21f, FontStyles.Bold, Muted, new Vector2(0.08f, 0.67f), new Vector2(1f, 1f), TextAlignmentOptions.Left);
-        CreateText(header, "Title", spec.Title, 44f, FontStyles.Bold, Navy, new Vector2(0f, 0.02f), new Vector2(1f, 0.66f), TextAlignmentOptions.Left);
+        RectTransform header = CreateRect(page, "Header", new Vector2(0.055f, 0.81f), new Vector2(0.945f, 0.975f));
+        TextMeshProUGUI section = CreateText(header, "Section", spec.Section, 36f, FontStyles.Bold, Blue, new Vector2(0f, 0.60f), new Vector2(0.035f, 1f), TextAlignmentOptions.Left);
+        section.enableAutoSizing = false;
+        TextMeshProUGUI eyebrow = CreateText(header, "Eyebrow", spec.Eyebrow, 32f, FontStyles.Bold, Muted, new Vector2(0.04f, 0.60f), new Vector2(1f, 1f), TextAlignmentOptions.Left);
+        eyebrow.enableAutoSizing = false;
+        TextMeshProUGUI title = CreateText(header, "Title", spec.Title, 52f, FontStyles.Bold, Navy, new Vector2(0f, 0.02f), new Vector2(1f, 0.60f), TextAlignmentOptions.Left);
+        title.fontSizeMin = 44f;
         RectTransform line = CreateRect(header, "Accent", new Vector2(0f, 0f), new Vector2(0.12f, 0.025f));
         line.gameObject.AddComponent<Image>().color = Blue;
     }
 
-    private static void CreateTextCard(RectTransform parent, string name, Vector2 min, Vector2 max, string title, string body, bool emphasized)
+    private static void CreateTextCard(RectTransform parent, string name, Vector2 min, Vector2 max, string title, string body, bool emphasized, float bodySize = 28f)
     {
         RectTransform card = CreateCard(parent, name, min, max, emphasized ? LightBlue : Color.white);
-        CreateText(card, "Title", title, 28f, FontStyles.Bold, Navy, new Vector2(0.055f, 0.82f), new Vector2(0.945f, 0.95f), TextAlignmentOptions.Left);
-        TextMeshProUGUI content = CreateText(card, "Body", body, 26f, FontStyles.Normal, Ink, new Vector2(0.055f, 0.06f), new Vector2(0.945f, 0.80f), TextAlignmentOptions.TopLeft);
+        CreateText(card, "Title", title, 32f, FontStyles.Bold, Ink, new Vector2(0.055f, 0.82f), new Vector2(0.945f, 0.95f), TextAlignmentOptions.Left);
+        TextMeshProUGUI content = CreateText(card, "Body", body, bodySize, FontStyles.Normal, Ink, new Vector2(0.055f, 0.06f), new Vector2(0.945f, 0.80f), TextAlignmentOptions.TopLeft);
         content.lineSpacing = 3f;
     }
 
@@ -386,7 +469,7 @@ public class StartScreenController : MonoBehaviour
 
     private static void CreateNote(RectTransform page, string value)
     {
-        RectTransform note = CreateCard(page, "Note", new Vector2(0.08f, 0.13f), new Vector2(0.92f, 0.19f), new Color32(255, 221, 0, 255));
+        RectTransform note = CreateCard(page, "Note", new Vector2(0.08f, 0.13f), new Vector2(0.92f, 0.19f), new Color32(255, 241, 241, 255));
         CreateText(note, "Text", "LƯU Ý  •  " + value, 23f, FontStyles.Bold, Color.black, new Vector2(0.025f, 0.08f), new Vector2(0.975f, 0.92f), TextAlignmentOptions.Center);
     }
 
@@ -395,26 +478,12 @@ public class StartScreenController : MonoBehaviour
         if (background == null)
             return;
         RectTransform navigation = CreateRect(background, "GXWorks2Navigation", new Vector2(0f, 0f), new Vector2(1f, 0.115f));
-        navigation.gameObject.AddComponent<Image>().color = Color.white;
-        previousButton = CreateButton(navigation, "Previous", "←  Trước", new Vector2(0.055f, 0.19f), new Vector2(0.20f, 0.82f));
-        nextButton = CreateButton(navigation, "Next", "Sau  →", new Vector2(0.80f, 0.19f), new Vector2(0.945f, 0.82f));
+        previousButton = CreateGuideNavigationButton(navigation, "Previous", "Quay lại", true);
+        nextButton = CreateGuideNavigationButton(navigation, "Next", "Tiếp theo", false);
         nextButtonLabel = nextButton.GetComponentInChildren<TextMeshProUGUI>();
         previousButton.onClick.AddListener(PreviousPage);
         nextButton.onClick.AddListener(NextPage);
         pageIndicator = CreateText(navigation, "PageIndicator", "1 / 1", 25f, FontStyles.Bold, Muted, new Vector2(0.42f, 0.18f), new Vector2(0.58f, 0.82f), TextAlignmentOptions.Center);
-    }
-
-    private static Button CreateButton(RectTransform parent, string name, string label, Vector2 min, Vector2 max)
-    {
-        RectTransform rect = CreateCard(parent, name, min, max, Color.white);
-        Button button = rect.gameObject.AddComponent<Button>();
-        ColorBlock colors = button.colors;
-        colors.highlightedColor = new Color32(245, 245, 245, 255);
-        colors.pressedColor = new Color32(215, 25, 32, 255);
-        colors.disabledColor = new Color32(225, 225, 225, 200);
-        button.colors = colors;
-        CreateText(rect, "Label", label, 25f, FontStyles.Bold, Navy, Vector2.zero, Vector2.one, TextAlignmentOptions.Center);
-        return button;
     }
 
     private void ShowPage(int index)
@@ -424,20 +493,20 @@ public class StartScreenController : MonoBehaviour
         currentPageIndex = Mathf.Clamp(index, 0, pages.Length - 1);
         for (int i = 0; i < pages.Length; i++)
             pages[i].SetActive(i == currentPageIndex);
-        previousButton.interactable = currentPageIndex > 0;
-        nextButtonLabel.text = currentPageIndex == pages.Length - 1 ? "Bắt đầu  →" : "Sau  →";
+        previousButton.gameObject.SetActive(currentPageIndex > 0);
+        nextButtonLabel.text = "Tiếp theo";
         pageIndicator.text = $"{currentPageIndex + 1} / {pages.Length}";
 
         if (backgroundImage != null)
         {
             backgroundImage.sprite = null;
-            backgroundImage.color = Color.white;
+            backgroundImage.color = Surface;
         }
         if (sceneCamera != null)
         {
             sceneCamera.allowHDR = false;
             sceneCamera.clearFlags = CameraClearFlags.SolidColor;
-            sceneCamera.backgroundColor = Color.white;
+            sceneCamera.backgroundColor = Surface;
         }
     }
 
@@ -452,10 +521,16 @@ public class StartScreenController : MonoBehaviour
     private static RectTransform CreateCard(Transform parent, string name, Vector2 min, Vector2 max, Color color)
     {
         RectTransform card = CreateRect(parent, name, min, max);
-        card.gameObject.AddComponent<Image>().color = color;
+        Image image = card.gameObject.AddComponent<Image>();
+        image.color = color;
+        image.sprite = Resources.Load<Sprite>("UI/RoundedRect");
+        image.type = Image.Type.Sliced;
         Outline outline = card.gameObject.AddComponent<Outline>();
-        outline.effectColor = new Color32(205, 205, 205, 255);
+        outline.effectColor = new Color32(220, 222, 225, 255);
         outline.effectDistance = new Vector2(1f, -1f);
+        Shadow shadow = card.gameObject.AddComponent<Shadow>();
+        shadow.effectColor = new Color32(28, 34, 40, 18);
+        shadow.effectDistance = new Vector2(0f, -4f);
         return card;
     }
 

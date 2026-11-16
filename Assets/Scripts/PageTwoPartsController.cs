@@ -656,35 +656,18 @@ public class PageTwoPartsController : MonoBehaviour
         Vector3 origin = new Vector3(modelBounds.max.x + spacing * 2f, modelBounds.center.y - spacing, modelBounds.center.z);
         for (int i = 0; i < 3; i++)
         {
-            GameObject wire = new GameObject("DemoWire_" + (i + 1), typeof(LineRenderer));
+            GameObject wire = new GameObject("DemoWire_" + (i + 1), typeof(ProceduralConnectedWire));
             wire.transform.SetParent(group.transform, true);
             Vector3 start = origin + Vector3.down * spacing * 2.2f * i;
             Vector3 end = start + Vector3.right * length;
-            LineRenderer line = wire.GetComponent<LineRenderer>();
-            line.useWorldSpace = true;
-            line.positionCount = 18;
-            line.startWidth = spacing * 0.5f;
-            line.endWidth = spacing * 0.5f;
-            line.numCapVertices = 4;
-            line.numCornerVertices = 4;
-            line.alignment = LineAlignment.View;
-            line.sharedMaterial = CreateWireBodyMaterial(i);
-            // Giữ vertex color trắng để màu thân dây lấy chính xác từ material của Sy_scene.
-            line.startColor = Color.white;
-            line.endColor = Color.white;
-            for (int p = 0; p < line.positionCount; p++)
-            {
-                float t = p / (line.positionCount - 1f);
-                Vector3 point = Vector3.Lerp(start, end, t);
-                point.y -= Mathf.Sin(t * Mathf.PI) * spacing * 0.8f;
-                line.SetPosition(p, point);
-            }
-            CreateJack(wire.transform, start, spacing * 3.2f, i, false);
-            CreateJack(wire.transform, end, spacing * 3.2f, i, true);
+            end.y -= spacing * 0.35f;
+            ProceduralConnectedWire cable = wire.GetComponent<ProceduralConnectedWire>();
+            cable.ConfigurePreview(start, end, GetJackBodyColor(i), spacing * 0.5f);
+            cable.Rebuild();
         }
     }
 
-    private Material CreateWireBodyMaterial(int colorIndex)
+    private Color GetJackBodyColor(int colorIndex)
     {
         Material source = jackBodyMaterials != null && colorIndex < jackBodyMaterials.Length
             ? jackBodyMaterials[colorIndex]
@@ -702,18 +685,7 @@ public class PageTwoPartsController : MonoBehaviour
             }
         }
 
-        Shader shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Sprites/Default");
-        Material material = new Material(shader) { name = $"Page2Wire_{colorIndex}" };
-        if (material.HasProperty("_BaseColor"))
-        {
-            material.SetColor("_BaseColor", bodyColor);
-        }
-        if (material.HasProperty("_Color"))
-        {
-            material.SetColor("_Color", bodyColor);
-        }
-        runtimeWireMaterials.Add(material);
-        return material;
+        return bodyColor;
     }
 
     private void CreateJack(Transform parent, Vector3 position, float targetLength, int colorIndex, bool faceOpposite)

@@ -36,7 +36,7 @@ namespace PDTwin.RuntimeUI
             RectTransform barRect = bar.GetComponent<RectTransform>();
             // Leave enough vertical room for readable Vietnamese labels. The
             // runtime layout guard moves the lesson navigator below this bar.
-            PDTwinRuntimeUiFactory.AnchorTop(barRect, 70f);
+            PDTwinRuntimeUiFactory.AnchorTop(barRect, 92f);
 
             Shadow shadow = bar.AddComponent<Shadow>();
             shadow.effectColor = new Color(0.07f, 0.10f, 0.16f, 0.16f);
@@ -53,7 +53,7 @@ namespace PDTwin.RuntimeUI
             GameObject rowObject = new GameObject("StatusRow", typeof(RectTransform), typeof(HorizontalLayoutGroup));
             rowObject.transform.SetParent(bar.transform, false);
             RectTransform rowRect = rowObject.GetComponent<RectTransform>();
-            PDTwinRuntimeUiFactory.Stretch(rowRect, 10f, 8f, 10f, 7f);
+            PDTwinRuntimeUiFactory.Stretch(rowRect, 10f, 9f, 10f, 9f);
             HorizontalLayoutGroup row = rowObject.GetComponent<HorizontalLayoutGroup>();
             row.spacing = 8f;
             row.childAlignment = TextAnchor.MiddleLeft;
@@ -156,8 +156,8 @@ namespace PDTwin.RuntimeUI
             rect.anchorMin = new Vector2(0f, 0f);
             rect.anchorMax = new Vector2(1f, 0f);
             rect.pivot = new Vector2(0.5f, 1f);
-            rect.anchoredPosition = new Vector2(0f, -4f);
-            rect.sizeDelta = new Vector2(-24f, 46f);
+            rect.anchoredPosition = new Vector2(0f, -5f);
+            rect.sizeDelta = new Vector2(-24f, 50f);
 
             transitionDot = PDTwinRuntimeUiFactory.CreateRect(
                 "StatusDot", transitionBanner.transform, PDTwinRuntimeTheme.HealthColor(RuntimeHealth.Warning), true).GetComponent<Image>();
@@ -170,16 +170,16 @@ namespace PDTwin.RuntimeUI
             dotRect.sizeDelta = new Vector2(12f, 12f);
 
             transitionTitle = PDTwinRuntimeUiFactory.CreateText(
-                "Title", transitionBanner.transform, "ĐANG CHUYỂN CHẾ ĐỘ", 14f,
-                PDTwinRuntimeTheme.Ink, FontStyles.Bold);
+                "Title", transitionBanner.transform, "ĐANG CHUYỂN CHẾ ĐỘ", 15.5f,
+                PDTwinRuntimeTheme.Ink, FontStyles.Bold, TextAlignmentOptions.MidlineLeft);
             RectTransform titleRect = transitionTitle.rectTransform;
-            titleRect.anchorMin = new Vector2(0f, 0.42f);
+            titleRect.anchorMin = new Vector2(0f, 0f);
             titleRect.anchorMax = new Vector2(0.48f, 1f);
             titleRect.offsetMin = new Vector2(36f, 0f);
-            titleRect.offsetMax = new Vector2(0f, -3f);
+            titleRect.offsetMax = Vector2.zero;
 
             transitionDetail = PDTwinRuntimeUiFactory.CreateText(
-                "Detail", transitionBanner.transform, string.Empty, 12.5f,
+                "Detail", transitionBanner.transform, string.Empty, 13.5f,
                 PDTwinRuntimeTheme.Muted, FontStyles.Normal, TextAlignmentOptions.MidlineRight);
             RectTransform detailRect = transitionDetail.rectTransform;
             detailRect.anchorMin = new Vector2(0.45f, 0f);
@@ -198,14 +198,14 @@ namespace PDTwin.RuntimeUI
             layout.preferredWidth = 150f;
             layout.minWidth = 138f;
 
-            TextMeshProUGUI mark = PDTwinRuntimeUiFactory.CreateText("Mark", brand.transform, "PTIT", 24f, PDTwinRuntimeTheme.PtitRed, FontStyles.Bold);
+            TextMeshProUGUI mark = PDTwinRuntimeUiFactory.CreateText("Mark", brand.transform, "PTIT", 32f, PDTwinRuntimeTheme.PtitRed, FontStyles.Bold);
             RectTransform markRect = mark.rectTransform;
             markRect.anchorMin = new Vector2(0f, 0.34f);
             markRect.anchorMax = new Vector2(1f, 1f);
             markRect.offsetMin = new Vector2(12f, 0f);
             markRect.offsetMax = new Vector2(-8f, -3f);
 
-            TextMeshProUGUI caption = PDTwinRuntimeUiFactory.CreateText("Caption", brand.transform, "DIGITAL TWIN LAB", 9.5f, PDTwinRuntimeTheme.PtitRedDark, FontStyles.Bold);
+            TextMeshProUGUI caption = PDTwinRuntimeUiFactory.CreateText("Caption", brand.transform, "DIGITAL TWIN LAB", 13f, PDTwinRuntimeTheme.PtitRedDark, FontStyles.Bold);
             RectTransform captionRect = caption.rectTransform;
             captionRect.anchorMin = Vector2.zero;
             captionRect.anchorMax = new Vector2(1f, 0.42f);
@@ -227,27 +227,28 @@ namespace PDTwin.RuntimeUI
             dotRect.anchorMax = new Vector2(0f, 1f);
             dotRect.pivot = new Vector2(0f, 1f);
             // Align the centre of the dot with the first-line status label.
-            dotRect.anchoredPosition = new Vector2(13f, -6.5f);
-            dotRect.sizeDelta = new Vector2(11f, 11f);
+            dotRect.anchoredPosition = new Vector2(13f, -9f);
+            dotRect.sizeDelta = new Vector2(13f, 13f);
 
-            TextMeshProUGUI label = PDTwinRuntimeUiFactory.CreateText("Label", root.transform, defaultLabel, 11.5f, PDTwinRuntimeTheme.Muted, FontStyles.Bold);
+            TextMeshProUGUI label = PDTwinRuntimeUiFactory.CreateText("Label", root.transform, defaultLabel, 15f, PDTwinRuntimeTheme.Muted, FontStyles.Bold);
             RectTransform labelRect = label.rectTransform;
             labelRect.anchorMin = new Vector2(0f, 0.66f);
             labelRect.anchorMax = new Vector2(1f, 1f);
             labelRect.offsetMin = new Vector2(28f, 0f);
             labelRect.offsetMax = new Vector2(-8f, -5f);
 
-            TextMeshProUGUI value = PDTwinRuntimeUiFactory.CreateText("Value", root.transform, "ĐANG KHỞI TẠO", 17f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
+            TextMeshProUGUI value = PDTwinRuntimeUiFactory.CreateText("Value", root.transform, "ĐANG KHỞI TẠO", 23f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
             RectTransform valueRect = value.rectTransform;
             valueRect.anchorMin = new Vector2(0f, 0.27f);
             valueRect.anchorMax = new Vector2(1f, 0.72f);
             valueRect.offsetMin = new Vector2(12f, 0f);
             valueRect.offsetMax = new Vector2(-8f, 0f);
 
-            TextMeshProUGUI detail = PDTwinRuntimeUiFactory.CreateText("Detail", root.transform, "Đang kiểm tra kết nối...", 10.5f, PDTwinRuntimeTheme.Muted);
+            TextMeshProUGUI detail = PDTwinRuntimeUiFactory.CreateText("Detail", root.transform, "Đang kiểm tra kết nối...", 18f,
+                new Color32(59, 43, 35, 255), FontStyles.Bold);
             RectTransform detailRect = detail.rectTransform;
             detailRect.anchorMin = Vector2.zero;
-            detailRect.anchorMax = new Vector2(1f, 0.34f);
+            detailRect.anchorMax = new Vector2(1f, 0.38f);
             detailRect.offsetMin = new Vector2(12f, 3f);
             detailRect.offsetMax = new Vector2(-8f, 0f);
 
@@ -272,7 +273,7 @@ namespace PDTwin.RuntimeUI
             discRect.anchorMax = new Vector2(0f, 0.5f);
             discRect.pivot = new Vector2(0f, 0.5f);
             discRect.anchoredPosition = new Vector2(11f, 0f);
-            discRect.sizeDelta = new Vector2(46f, 46f);
+            discRect.sizeDelta = new Vector2(54f, 54f);
 
             scoreDisc = PDTwinRuntimeUiFactory.CreateRect("ScoreProgress", scoreTrack.transform, PDTwinRuntimeTheme.PtitRed).GetComponent<Image>();
             PDTwinRuntimeUiFactory.SetCircle(scoreDisc);
@@ -287,21 +288,21 @@ namespace PDTwin.RuntimeUI
             PDTwinRuntimeUiFactory.SetCircle(scoreInner);
             PDTwinRuntimeUiFactory.Stretch(scoreInner.rectTransform, 5f, 5f, 5f, 5f);
 
-            scoreDiscText = PDTwinRuntimeUiFactory.CreateText("DiscText", scoreInner.transform, "0.0", 12.5f, PDTwinRuntimeTheme.PtitRedDark, FontStyles.Bold, TextAlignmentOptions.Center);
+            scoreDiscText = PDTwinRuntimeUiFactory.CreateText("DiscText", scoreInner.transform, "0.0", 16f, PDTwinRuntimeTheme.PtitRedDark, FontStyles.Bold, TextAlignmentOptions.Center);
             PDTwinRuntimeUiFactory.Stretch(scoreDiscText.rectTransform);
 
-            scoreCaption = PDTwinRuntimeUiFactory.CreateText("Caption", scoreButton.transform, "Điểm tạm • xem chi tiết", 10.5f, PDTwinRuntimeTheme.PtitRedDark, FontStyles.Bold);
+            scoreCaption = PDTwinRuntimeUiFactory.CreateText("Caption", scoreButton.transform, "Điểm tạm • xem chi tiết", 15f, PDTwinRuntimeTheme.PtitRedDark, FontStyles.Bold);
             RectTransform captionRect = scoreCaption.rectTransform;
             captionRect.anchorMin = new Vector2(0f, 0.52f);
             captionRect.anchorMax = Vector2.one;
-            captionRect.offsetMin = new Vector2(66f, 0f);
+            captionRect.offsetMin = new Vector2(74f, 0f);
             captionRect.offsetMax = new Vector2(-22f, -3f);
 
-            scoreValue = PDTwinRuntimeUiFactory.CreateText("Value", scoreButton.transform, "0.00 / 10", 21f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
+            scoreValue = PDTwinRuntimeUiFactory.CreateText("Value", scoreButton.transform, "0.00 / 10", 27f, PDTwinRuntimeTheme.Ink, FontStyles.Bold);
             RectTransform valueRect = scoreValue.rectTransform;
             valueRect.anchorMin = Vector2.zero;
             valueRect.anchorMax = new Vector2(1f, 0.62f);
-            valueRect.offsetMin = new Vector2(66f, 3f);
+            valueRect.offsetMin = new Vector2(74f, 3f);
             valueRect.offsetMax = new Vector2(-22f, 0f);
 
             TextMeshProUGUI arrow = PDTwinRuntimeUiFactory.CreateText("Arrow", scoreButton.transform, "›", 22f, PDTwinRuntimeTheme.PtitRed, FontStyles.Bold, TextAlignmentOptions.Center);
@@ -326,7 +327,7 @@ namespace PDTwin.RuntimeUI
     public sealed class Bai2RuntimeLayoutGuard : MonoBehaviour
     {
         private const float SearchInterval = 0.2f;
-        private const float NavigationTop = 72f;
+        private const float NavigationTop = 154f;
 
         private bool navigationAdjusted;
         private bool bottomMaskDisabled;
@@ -372,6 +373,11 @@ namespace PDTwin.RuntimeUI
         private void DisableBottomMask()
         {
             GameObject canvas = GameObject.Find("Bai2PracticalWorkspaceMasks_Canvas");
+            if (canvas != null)
+            {
+                bottomMaskDisabled = true;
+                return;
+            }
             if (canvas == null)
                 canvas = GameObject.Find("PracticalWorkspaceMasks_Canvas");
             if (canvas == null)

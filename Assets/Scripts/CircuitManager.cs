@@ -134,7 +134,8 @@ public class CircuitManager : MonoBehaviour
         public string SocketB;
     }
 
-    public bool IsPopupVisible => popupVisible || Time.frameCount == popupClosedFrame;
+    public bool IsPopupVisible => popupVisible || Time.frameCount == popupClosedFrame ||
+        (TryGetComponent<Bai2PracticalWorkspaceSkin>(out var skin) && skin.IsGuidePopupVisible);
     public LessonRuntimeMode RuntimeMode => runtimeMode;
     public bool IsCompletedReviewMode => runtimeMode == LessonRuntimeMode.Bai2CompletedReview;
     public int CurrentWiringStepIndex => currentStepIndex;
@@ -540,7 +541,7 @@ public class CircuitManager : MonoBehaviour
             GameObject stepRoot = stepRoots[i];
             if (stepRoot != null)
             {
-                stepRoot.SetActive(true);
+                stepRoot.SetActive(i == stepIndex);
                 SetStepInteractionEnabled(stepRoot, false);
                 HideStepPresentationObjects(stepRoot);
             }
@@ -559,7 +560,7 @@ public class CircuitManager : MonoBehaviour
         UpdateGuideReturnButton();
 
         Debug.Log(
-            $"[Circuit] Review Buoc {stepIndex + 1}: giu hien thi du {totalWires} day, " +
+            $"[Circuit] Review Buoc {stepIndex + 1}: chi hien day cua buoc dang xem, " +
             "khoa tuong tac va chi hien guide cua buoc dang xem.");
     }
 
@@ -666,6 +667,8 @@ public class CircuitManager : MonoBehaviour
             if (!systemUnlocked)
                 return false;
 
+            // Restore the operation view before the PLC captures its camera state.
+            GetComponent<Bai2PracticalWorkspaceSkin>()?.RestoreOperationCamera();
             visibleStepIndex = HmiStepIndex;
             ShowAllCompletedWires();
             OpenHmiScene();
@@ -1431,11 +1434,11 @@ public class CircuitManager : MonoBehaviour
 
         RectTransform buttonRect = buttonObject.GetComponent<RectTransform>();
         guideReturnButtonRect = buttonRect;
-        buttonRect.anchorMin = new Vector2(0f, 1f);
-        buttonRect.anchorMax = new Vector2(0f, 1f);
-        buttonRect.pivot = new Vector2(0f, 1f);
-        buttonRect.anchoredPosition = new Vector2(24f, -24f);
-        buttonRect.sizeDelta = new Vector2(210f, 58f);
+        buttonRect.anchorMin = Vector2.zero;
+        buttonRect.anchorMax = Vector2.zero;
+        buttonRect.pivot = Vector2.zero;
+        buttonRect.anchoredPosition = new Vector2(52f, 28f);
+        buttonRect.sizeDelta = new Vector2(300f, 58f);
 
         Button button = buttonObject.AddComponent<Button>();
         button.targetGraphic = buttonImage;
@@ -1443,24 +1446,24 @@ public class CircuitManager : MonoBehaviour
         button.onClick.AddListener(ReturnToGuidePage);
 
         ColorBlock colors = button.colors;
-        colors.normalColor = new Color(1f, 1f, 1f, 0.95f);
-        colors.highlightedColor = new Color(0.94f, 0.97f, 1f, 1f);
-        colors.pressedColor = new Color(0.86f, 0.92f, 0.99f, 1f);
+        colors.normalColor = new Color(0.82f, 0.12f, 0.15f, 1f);
+        colors.highlightedColor = new Color(0.92f, 0.17f, 0.20f, 1f);
+        colors.pressedColor = new Color(0.68f, 0.08f, 0.11f, 1f);
         colors.selectedColor = colors.normalColor;
         button.colors = colors;
 
         TextMeshProUGUI text = CreatePopupText(
             buttonObject.transform,
             "Label",
-            "V\u1ec1 h\u01b0\u1edbng d\u1eabn",
+            "Quay lại",
             22f,
             FontStyles.Bold,
-            new Color(0.11f, 0.18f, 0.29f, 1f),
+            Color.white,
             TextAlignmentOptions.Center);
         text.enableAutoSizing = true;
         text.fontSizeMin = 15f;
         text.fontSizeMax = 22f;
-        SetCenteredRect(text.rectTransform, new Vector2(190f, 42f), Vector2.zero);
+        SetCenteredRect(text.rectTransform, new Vector2(280f, 42f), Vector2.zero);
 
         UpdateGuideReturnButton();
     }

@@ -38,6 +38,7 @@ public sealed class WireStepHighlighter : MonoBehaviour
 
     private sealed class WireVisualState
     {
+        public WireBody Wire;
         public int StepIndex;
         public LineRenderer Line;
         public MaterialPropertyBlock PropertyBlock;
@@ -158,6 +159,7 @@ public sealed class WireStepHighlighter : MonoBehaviour
                     wire,
                     new WireVisualState
                     {
+                        Wire = wire,
                         StepIndex = stepIndex,
                         Line = line,
                         PropertyBlock = propertyBlock,
@@ -240,6 +242,8 @@ public sealed class WireStepHighlighter : MonoBehaviour
 
     private static void SetColor(WireVisualState state, Color color)
     {
+        if (state.Wire != null)
+            state.Wire.SetConnectedPresentationColor(color);
         if (state.MaterialColorProperty >= 0)
         {
             state.PropertyBlock.SetColor(state.MaterialColorProperty, color);
@@ -260,6 +264,8 @@ public sealed class WireStepHighlighter : MonoBehaviour
             if (state == null || state.Line == null)
                 continue;
 
+            if (state.Wire != null)
+                state.Wire.SetConnectedPresentationColor(state.BaseColor);
             state.Line.startWidth = state.BaseStartWidth;
             state.Line.endWidth = state.BaseEndWidth;
             state.Line.startColor = state.BaseStartColor;

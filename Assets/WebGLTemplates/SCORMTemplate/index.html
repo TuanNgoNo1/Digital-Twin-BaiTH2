@@ -10,7 +10,7 @@
   </head>
   <body>
     <div id="unity-container" class="unity-desktop">
-      <canvas id="unity-canvas" width={{{ WIDTH }}} height={{{ HEIGHT }}} tabindex="-1"></canvas>
+      <canvas id="unity-canvas" width={{{ WIDTH }}} height={{{ HEIGHT }}} tabindex="0"></canvas>
 
       <div id="unity-loading-bar">
         <div id="unity-logo"></div>
@@ -31,6 +31,11 @@
     <script>
       var container = document.querySelector("#unity-container");
       var canvas = document.querySelector("#unity-canvas");
+      // Restore Unity keyboard input only when the user clicks its canvas.
+      // Focusing the page on load/resize would steal input from Guacamole.
+      canvas.addEventListener("pointerdown", function () {
+        canvas.focus({ preventScroll: true });
+      });
       var loadingBar = document.querySelector("#unity-loading-bar");
       var progressBarFull = document.querySelector("#unity-progress-bar-full");
       var fullscreenButton = document.querySelector("#unity-fullscreen-button");
